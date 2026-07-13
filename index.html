@@ -221,6 +221,19 @@ input,select,button,textarea{font-family:inherit;font-size:15px;}
 .page-head .sub{color:var(--gray-mid);font-size:13.5px;margin:0;}
 
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:28px;}
+
+.quick-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;}
+.quick-action-btn{
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  background:var(--off-white);
+  border:1.5px solid var(--gray-line);
+  border-radius:var(--radius);
+  padding:20px 14px;
+  transition:border-color .15s, background .15s, transform .1s;
+}
+.quick-action-btn:hover{border-color:var(--gold);background:rgba(198,161,91,0.08);transform:translateY(-2px);}
+.quick-action-btn .qa-icon{font-size:28px;}
+.quick-action-btn .qa-label{font-size:14px;font-weight:700;color:var(--royal-blue);}
 .stat-card{
   background:var(--white);border-radius:var(--radius);padding:18px 20px;
   border:1px solid var(--gray-line);box-shadow:var(--shadow);
@@ -439,6 +452,7 @@ async function doSignup(formEl, btn){
   const password = fd.get('password')?.trim();
   const fullName = normalizeName(fd.get('full_name'));
   const phone = fd.get('phone')?.trim();
+  const contactEmail = fd.get('contact_email')?.trim();
   const birthDate = fd.get('birth_date');
   const studyYear = fd.get('study_year');
   const photoFile = document.getElementById('signup-photo-input').files[0];
@@ -492,6 +506,7 @@ async function doSignup(formEl, btn){
     id: userId,
     full_name: fullName,
     phone,
+    contact_email: contactEmail || null,
     birth_date: birthDate,
     study_year: studyYear,
     photo_url: pub.publicUrl,
@@ -616,9 +631,13 @@ function renderSignup(){
             <input type="tel" name="phone" required>
           </div>
           <div class="field">
-            <label>تاريخ الميلاد <span class="req">*</span></label>
-            <input type="date" name="birth_date" required>
+            <label>البريد الإلكتروني (اختياري)</label>
+            <input type="email" name="contact_email">
           </div>
+        </div>
+        <div class="field">
+          <label>تاريخ الميلاد <span class="req">*</span></label>
+          <input type="date" name="birth_date" required>
         </div>
         <div class="field">
           <label>السنة الدراسية <span class="req">*</span></label>
@@ -713,6 +732,7 @@ function renderStudentProfile(main){
         <h3 class="name">${escapeHtml(p.full_name)}</h3>
         <div class="meta">
           📱 ${escapeHtml(p.phone || '—')}<br>
+          ✉️ ${escapeHtml(p.contact_email || '—')}<br>
           🎂 ${fmtDate(p.birth_date)}<br>
           🎓 ${escapeHtml(p.study_year || '—')}
         </div>
@@ -797,6 +817,7 @@ async function renderStudentAttendance(main){
 async function renderAdmin(){
   const tabs = [
     { key:'overview', label:'نظرة عامة' },
+    { key:'lookup', label:'بحث عن دارس' },
     { key:'exams', label:'الامتحانات' },
     { key:'scores', label:'رصد الدرجات' },
     { key:'attendance', label:'الحضور' },
@@ -809,6 +830,7 @@ async function renderAdmin(){
   main.innerHTML = `<div class="loader"></div>`;
 
   if(state.adminTab === 'overview') return renderAdminOverview(main);
+  if(state.adminTab === 'lookup') return renderAdminLookup(main);
   if(state.adminTab === 'exams') return renderAdminExams(main);
   if(state.adminTab === 'scores') return renderAdminScores(main);
   if(state.adminTab === 'attendance') return renderAdminAttendance(main);
@@ -833,6 +855,31 @@ async function renderAdminOverview(main){
 
   main.innerHTML = `
   <div class="page-head"><div><h2>نظرة عامة</h2><p class="sub">ملخص سريع على نشاط المنصة</p></div></div>
+  <div class="panel">
+    <h3>إجراءات سريعة</h3>
+    <div class="quick-actions">
+      <button class="quick-action-btn" data-qa="lookup">
+        <span class="qa-icon">🔍</span>
+        <span class="qa-label">بحث عن دارس</span>
+      </button>
+      <button class="quick-action-btn" data-qa="exams">
+        <span class="qa-icon">📝</span>
+        <span class="qa-label">إضافة امتحان جديد</span>
+      </button>
+      <button class="quick-action-btn" data-qa="scores">
+        <span class="qa-icon">✅</span>
+        <span class="qa-label">رصد الدرجات</span>
+      </button>
+      <button class="quick-action-btn" data-qa="attendance">
+        <span class="qa-icon">📋</span>
+        <span class="qa-label">تسجيل الحضور</span>
+      </button>
+      <button class="quick-action-btn" data-qa="students">
+        <span class="qa-icon">👥</span>
+        <span class="qa-label">قائمة الدارسين</span>
+      </button>
+    </div>
+  </div>
   <div class="stat-grid">
     <div class="stat-card gold-accent"><div class="v">${students.length}</div><div class="l">إجمالي الدارسين</div></div>
     <div class="stat-card"><div class="v">${exams.length}</div><div class="l">عدد الامتحانات</div></div>
@@ -845,6 +892,135 @@ async function renderAdminOverview(main){
     ${exams.length===0 ? `<div class="empty-state">لسه مفيش امتحانات</div>` : `
     <table><thead><tr><th>الاسم</th><th>المادة</th><th>التاريخ</th><th>الدرجة النهائية</th></tr></thead>
     <tbody>${exams.slice(0,5).map(e=>`<tr><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.subject||'—')}</td><td>${fmtDate(e.exam_date)}</td><td>${e.max_score}</td></tr>`).join('')}</tbody></table>`}
+  </div>`;
+
+  main.querySelectorAll('[data-qa]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.adminTab = btn.dataset.qa;
+      renderAdmin();
+    });
+  });
+}
+
+/* ===================== بحث عن دارس وعرض كل بياناته ===================== */
+async function renderAdminLookup(main, query='', selectedId=''){
+  const students = await fetchAllUsers();
+  const matches = query.trim() === '' ? [] : students.filter(s =>
+    s.full_name.toLowerCase().includes(query.trim().toLowerCase())
+  );
+
+  main.innerHTML = `
+  <div class="page-head"><div><h2>بحث عن دارس</h2><p class="sub">اكتب اسم أي دارس أو أدمن وشوف كل بياناته، درجاته، وحضوره في مكان واحد</p></div></div>
+  <div class="panel">
+    <div class="toolbar"><input type="text" class="grow" id="lookup-search" placeholder="اكتب الاسم هنا..." value="${escapeHtml(query)}" autofocus></div>
+    <div id="lookup-results"></div>
+  </div>
+  <div id="lookup-detail"></div>`;
+
+  const resultsWrap = document.getElementById('lookup-results');
+  const renderMatchList = () => {
+    if(query.trim() === ''){ resultsWrap.innerHTML = ''; return; }
+    resultsWrap.innerHTML = matches.length === 0
+      ? `<div class="empty-state">مفيش حد بالاسم ده</div>`
+      : `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">${matches.map(s => `
+          <button class="btn-outline" style="display:flex;align-items:center;gap:10px;justify-content:flex-start;text-align:right;padding:10px 14px;" data-pick="${s.id}">
+            <img class="row-photo" src="${s.photo_url}">
+            <span>${escapeHtml(s.full_name)}</span>
+            <span class="badge role-${s.role}" style="margin-right:auto;">${s.role==='admin'?'أدمن':'دارس'}</span>
+          </button>`).join('')}</div>`;
+    resultsWrap.querySelectorAll('[data-pick]').forEach(btn => {
+      btn.addEventListener('click', () => renderAdminLookup(main, query, btn.dataset.pick));
+    });
+  };
+  renderMatchList();
+
+  document.getElementById('lookup-search').addEventListener('input', (e) => {
+    renderAdminLookup(main, e.target.value, '');
+  });
+
+  if(selectedId){
+    await renderLookupDetail(selectedId);
+  }
+}
+
+async function renderLookupDetail(userId){
+  const detailWrap = document.getElementById('lookup-detail');
+  detailWrap.innerHTML = `<div class="loader"></div>`;
+
+  const { data: p } = await supabase.from('users').select('*').eq('id', userId).single();
+  if(!p){ detailWrap.innerHTML = `<div class="empty-state">تعذر تحميل بيانات الحساب</div>`; return; }
+
+  const { data: scores } = await supabase
+    .from('scores')
+    .select('score, exam_id, exams(name, subject, exam_date, max_score, passing_score)')
+    .eq('user_id', userId);
+  const { data: records } = await supabase
+    .from('attendance_records')
+    .select('status, session_id, attendance_sessions(name, session_date)')
+    .eq('user_id', userId);
+
+  const scoreRows = (scores||[]).filter(s=>s.exams).sort((a,b)=>new Date(b.exams.exam_date)-new Date(a.exams.exam_date));
+  const attRows = (records||[]).filter(r=>r.attendance_sessions).sort((a,b)=>new Date(b.attendance_sessions.session_date)-new Date(a.attendance_sessions.session_date));
+  const presentCount = attRows.filter(r=>r.status==='present').length;
+  const attRate = attRows.length ? Math.round((presentCount/attRows.length)*100) : 0;
+  let avgPct = '—';
+  if(scoreRows.length){
+    const pcts = scoreRows.map(s => (s.score/s.exams.max_score)*100);
+    avgPct = Math.round(pcts.reduce((a,b)=>a+b,0)/pcts.length) + '%';
+  }
+
+  detailWrap.innerHTML = `
+  <div class="panel">
+    <div class="profile-card">
+      <img src="${p.photo_url}" alt="">
+      <div>
+        <h3 class="name">${escapeHtml(p.full_name)}</h3>
+        <div class="meta">
+          📱 ${escapeHtml(p.phone || '—')}<br>
+          ✉️ ${escapeHtml(p.contact_email || '—')}<br>
+          🎂 ${fmtDate(p.birth_date)}<br>
+          🎓 ${escapeHtml(p.study_year || '—')}<br>
+          <span class="badge role-${p.role}">${p.role==='admin'?'أدمن':'دارس'}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="stat-grid">
+    <div class="stat-card gold-accent"><div class="v">${avgPct}</div><div class="l">متوسط الدرجات</div></div>
+    <div class="stat-card"><div class="v">${attRate}%</div><div class="l">نسبة الحضور</div></div>
+    <div class="stat-card"><div class="v">${scoreRows.length}</div><div class="l">امتحانات مرصودة</div></div>
+    <div class="stat-card"><div class="v">${attRows.length}</div><div class="l">لقاءات مسجّلة</div></div>
+  </div>
+  <div class="panel">
+    <h3>الدرجات</h3>
+    ${scoreRows.length===0 ? `<div class="empty-state">لسه مفيش درجات مرصودة</div>` : `
+    <table>
+      <thead><tr><th>الامتحان</th><th>المادة</th><th>التاريخ</th><th>الدرجة</th><th>النسبة</th><th>الحالة</th></tr></thead>
+      <tbody>${scoreRows.map(r => {
+        const pct = Math.round((r.score/r.exams.max_score)*100);
+        const passed = pct >= (r.exams.passing_score||50);
+        return `<tr>
+          <td>${escapeHtml(r.exams.name)}</td>
+          <td>${escapeHtml(r.exams.subject||'—')}</td>
+          <td>${fmtDate(r.exams.exam_date)}</td>
+          <td>${r.score} / ${r.exams.max_score}</td>
+          <td>${pct}%</td>
+          <td><span class="badge ${passed?'pass':'fail'}">${passed?'ناجح':'أقل من المطلوب'}</span></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`}
+  </div>
+  <div class="panel">
+    <h3>الحضور</h3>
+    ${attRows.length===0 ? `<div class="empty-state">لسه مفيش سجل حضور</div>` : `
+    <table>
+      <thead><tr><th>اللقاء</th><th>التاريخ</th><th>الحالة</th></tr></thead>
+      <tbody>${attRows.map(r => `<tr>
+        <td>${escapeHtml(r.attendance_sessions.name)}</td>
+        <td>${fmtDate(r.attendance_sessions.session_date)}</td>
+        <td><span class="badge ${r.status}">${r.status==='present'?'حاضر':'غايب'}</span></td>
+      </tr>`).join('')}</tbody>
+    </table>`}
   </div>`;
 }
 
@@ -1072,11 +1248,12 @@ async function renderAdminStudents(main, filterText=''){
     <div class="toolbar"><input type="text" class="grow" id="student-search" placeholder="بحث بالاسم أو السنة الدراسية..." value="${escapeHtml(filterText)}"></div>
     ${filtered.length===0 ? `<div class="empty-state">مفيش نتائج</div>` : `
     <table>
-      <thead><tr><th>الصورة</th><th>الاسم</th><th>الموبايل</th><th>تاريخ الميلاد</th><th>السنة الدراسية</th><th>الدور</th><th></th></tr></thead>
+      <thead><tr><th>الصورة</th><th>الاسم</th><th>الموبايل</th><th>الإيميل</th><th>تاريخ الميلاد</th><th>السنة الدراسية</th><th>الدور</th><th></th></tr></thead>
       <tbody>${filtered.map(s => `<tr>
         <td><img class="row-photo" src="${s.photo_url}"></td>
         <td>${escapeHtml(s.full_name)}</td>
         <td>${escapeHtml(s.phone||'—')}</td>
+        <td>${escapeHtml(s.contact_email||'—')}</td>
         <td>${fmtDate(s.birth_date)}</td>
         <td>${escapeHtml(s.study_year||'—')}</td>
         <td><span class="badge role-${s.role}">${s.role==='admin'?'أدمن':'دارس'}</span></td>
