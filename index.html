@@ -554,7 +554,7 @@ function renderLogin(){
   <div class="centered-shell">
     <div class="auth-card">
       <div class="brand-block">
-        <h1>أسرة البابا شنودة</h1>
+        <h1>أسرة البابا شنودة لإعداد خدام</h1>
         <p>لإعداد خدام</p>
       </div>
       ${state.error ? `<div class="error-box">${escapeHtml(state.error)}</div>` : ''}
@@ -664,7 +664,7 @@ function sidebarHtml(items, activeKey, navAttr){
     <div class="brand-block">
       <div class="mark" style="padding:0;overflow:hidden;"><img src="${p.photo_url}" alt="" style="width:100%;height:100%;object-fit:cover;"></div>
       <h1>${escapeHtml(p.full_name)}</h1>
-      <p>${p.role==='admin'?'أدمن':'دارس'} — أسرة البابا شنودة</p>
+      <p>${p.role==='admin'?'أدمن':'دارس'} — أسرة البابا شنودة لإعداد خدام</p>
     </div>
     ${items.map(it => `<div class="nav-item ${it.key===activeKey?'active':''}" data-${navAttr}="${it.key}">${it.label}</div>`).join('')}
     <div class="sidebar-footer">
