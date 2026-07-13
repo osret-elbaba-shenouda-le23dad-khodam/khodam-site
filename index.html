@@ -327,7 +327,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
    ========================================================= */
 const SUPABASE_URL = 'https://egbvfjfanpdrptqmtixc.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_EWvmf67VkDZu0yEuGkN79g_snpRMPbN';
-const EMAIL_DOMAIN = 'khodam.app'; // دومين وهمي بيتحول بيه اسم المستخدم لإيميل داخلي
+const EMAIL_DOMAIN = 'khodam.app'; // دومين وهمي بيتحول بيه الاسم الكامل لإيميل داخلي وراء الكواليس
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -343,9 +343,22 @@ let state = {
   loading: false,
 };
 
-function usernameToEmail(u){
-  const clean = (u || '').trim().toLowerCase().replace(/[^a-z0-9_.]/g,'');
-  return `${clean}@${EMAIL_DOMAIN}`;
+function normalizeName(n){
+  return (n || '').trim().replace(/\s+/g, ' ');
+}
+
+// هاش بسيط وثابت (djb2) بيحوّل الاسم لمعرف إنجليزي آمن يُستخدم كإيميل داخلي وراء الكواليس
+function nameHash(str){
+  let hash = 5381;
+  for(let i = 0; i < str.length; i++){
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash = hash & 0xffffffff;
+  }
+  return (hash >>> 0).toString(16);
+}
+
+function nameToEmail(fullName){
+  return `u${nameHash(normalizeName(fullName))}@${EMAIL_DOMAIN}`;
 }
 
 function fmtDate(d){
@@ -387,14 +400,24 @@ async function loadProfile(){
 }
 
 /* ===================== تسجيل الدخول / الخروج ===================== */
-async function doLogin(username, password, btn){
+async function doLogin(fullName, password, btn){
   state.error = '';
-  if(!username || !password){ state.error='اكتب اسم المستخدم وكلمة المرور'; render(); return; }
+  if(!fullName || !password){ state.error='اكتب الاسم الكامل وكلمة المرور'; render(); return; }
   btn.disabled = true; btn.textContent = 'جاري الدخول...';
-  const email = usernameToEmail(username);
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const loginKey = normalizeName(fullName);
+  const { data: lookup, error: lookupErr } = await supabase
+    .from('login_lookup')
+    .select('email')
+    .eq('login_key', loginKey)
+    .maybeSingle();
+  if(lookupErr || !lookup){
+    state.error = 'الاسم أو كلمة المرور غلط';
+    render();
+    return;
+  }
+  const { data, error } = await supabase.auth.signInWithPassword({ email: lookup.email, password });
   if(error){
-    state.error = 'اسم المستخدم أو كلمة المرور غلط';
+    state.error = 'الاسم أو كلمة المرور غلط';
     render();
     return;
   }
@@ -413,16 +436,19 @@ async function doLogout(){
 async function doSignup(formEl, btn){
   state.error = '';
   const fd = new FormData(formEl);
-  const username = fd.get('username')?.trim();
   const password = fd.get('password')?.trim();
-  const fullName = fd.get('full_name')?.trim();
+  const fullName = normalizeName(fd.get('full_name'));
   const phone = fd.get('phone')?.trim();
   const birthDate = fd.get('birth_date');
   const studyYear = fd.get('study_year');
   const photoFile = document.getElementById('signup-photo-input').files[0];
 
-  if(!username || !password || !fullName || !phone || !birthDate || !studyYear){
+  if(!password || !fullName || !phone || !birthDate || !studyYear){
     state.error = 'من فضلك املأ كل الحقول المطلوبة';
+    render(); return;
+  }
+  if(fullName.split(' ').length < 2){
+    state.error = 'اكتب اسمك بالكامل (اسمين على الأقل) عشان نقدر نميزك عن غيرك';
     render(); return;
   }
   if(!photoFile){
@@ -435,11 +461,19 @@ async function doSignup(formEl, btn){
   }
 
   btn.disabled = true; btn.textContent = 'جاري إنشاء الحساب...';
-  const email = usernameToEmail(username);
+
+  // تأكد إن الاسم ده مش متسجل قبل كده
+  const { data: existing } = await supabase.from('login_lookup').select('login_key').eq('login_key', fullName).maybeSingle();
+  if(existing){
+    state.error = 'الاسم ده متسجل بحساب قبل كده. لو ده أنت فعلاً، جرّب تسجيل الدخول. ولو حد تاني بنفس الاسم، اكتب اسمك بالكامل زي في شهادة الميلاد (3 أسماء) عشان نميزكم عن بعض';
+    render(); return;
+  }
+
+  const email = nameToEmail(fullName);
 
   const { data: signData, error: signErr } = await supabase.auth.signUp({ email, password });
   if(signErr){
-    state.error = signErr.message.includes('registered') ? 'اسم المستخدم ده متسجل قبل كده' : 'حصل خطأ: ' + signErr.message;
+    state.error = 'حصل خطأ: ' + signErr.message;
     render(); return;
   }
   const userId = signData.user.id;
@@ -465,6 +499,16 @@ async function doSignup(formEl, btn){
   });
   if(insErr){
     state.error = 'حصل خطأ في حفظ البيانات: ' + insErr.message;
+    render(); return;
+  }
+
+  const { error: lookupInsErr } = await supabase.from('login_lookup').insert({
+    login_key: fullName,
+    email,
+    user_id: userId,
+  });
+  if(lookupInsErr){
+    state.error = 'حصل خطأ في إتمام التسجيل: ' + lookupInsErr.message;
     render(); return;
   }
 
@@ -516,8 +560,8 @@ function renderLogin(){
       ${state.error ? `<div class="error-box">${escapeHtml(state.error)}</div>` : ''}
       <form id="login-form">
         <div class="field">
-          <label>اسم المستخدم</label>
-          <input type="text" name="username" autocomplete="username" required>
+          <label>الاسم الكامل</label>
+          <input type="text" name="full_name" autocomplete="name" required>
         </div>
         <div class="field">
           <label>كلمة المرور</label>
@@ -532,7 +576,7 @@ function renderLogin(){
   document.getElementById('login-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    doLogin(fd.get('username'), fd.get('password'), document.getElementById('login-btn'));
+    doLogin(fd.get('full_name'), fd.get('password'), document.getElementById('login-btn'));
   });
   document.getElementById('go-signup').addEventListener('click', () => {
     state.view = 'signup'; state.error=''; render();
@@ -549,7 +593,7 @@ function renderSignup(){
         <p>بيانات الخادم / الدارس</p>
       </div>
       ${state.error ? `<div class="error-box">${escapeHtml(state.error)}</div>` : ''}
-      <div class="info-box">اسم المستخدم هيبقى بحروف/أرقام إنجليزي بسيطة (زي اسم الدخول)، والاسم الكامل بالعربي هيظهر في كل الموقع.</div>
+      <div class="info-box">هتسجّل دخولك بعد كده بـ"الاسم الكامل" و"كلمة المرور"، فاكتب اسمك بالكامل (اسمين على الأقل) عشان محدش يشاركك نفس بيانات الدخول.</div>
       <form id="signup-form">
         <div class="photo-upload">
           <div class="photo-preview" id="photo-preview">لسه مفيش صورة</div>
@@ -562,15 +606,9 @@ function renderSignup(){
           <label>الاسم الكامل <span class="req">*</span></label>
           <input type="text" name="full_name" required>
         </div>
-        <div class="field-row">
-          <div class="field">
-            <label>اسم المستخدم (إنجليزي) <span class="req">*</span></label>
-            <input type="text" name="username" pattern="[A-Za-z0-9_.]+" required>
-          </div>
-          <div class="field">
-            <label>كلمة المرور <span class="req">*</span></label>
-            <input type="password" name="password" minlength="6" required>
-          </div>
+        <div class="field">
+          <label>كلمة المرور <span class="req">*</span></label>
+          <input type="password" name="password" minlength="6" required>
         </div>
         <div class="field-row">
           <div class="field">
