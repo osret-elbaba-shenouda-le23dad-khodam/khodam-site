@@ -303,6 +303,17 @@ tr:hover td{background:rgba(34,60,140,0.03);}
 }
 @keyframes spin{to{transform:rotate(360deg);}}
 
+/* New styles for sub tabs, notes, and edit modal */
+.sub-tabs { display: flex; gap: 15px; border-bottom: 2px solid var(--gray-line); margin-bottom: 20px; }
+.sub-tab { padding: 10px 15px; cursor: pointer; font-weight: 700; color: var(--gray-mid); border-bottom: 3px solid transparent; margin-bottom: -2px; }
+.sub-tab.active { color: var(--royal-blue); border-bottom-color: var(--gold); }
+.note-input { width: 150px; padding: 7px 10px; border: 1.5px solid var(--gray-line); border-radius: 6px; font-size: 12.5px; background: var(--off-white); }
+.note-input:focus { background: var(--white); border-color: var(--royal-blue-light); }
+
+.modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(23, 37, 94, 0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+.modal-content { background: var(--white); width: 100%; max-width: 500px; border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow); max-height: 90vh; overflow-y: auto; }
+.modal-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+
 /* mobile sidebar */
 .mobile-topbar{display:none;}
 @media (max-width:820px){
@@ -335,12 +346,8 @@ tr:hover td{background:rgba(34,60,140,0.03);}
 <script type="module">
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-/* =========================================================
-   إعدادات Supabase — غيّر القيم دي بتاعة مشروعك الجديد
-   ========================================================= */
 const SUPABASE_URL = 'https://egbvfjfanpdrptqmtixc.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_EWvmf67VkDZu0yEuGkN79g_snpRMPbN';
-const EMAIL_DOMAIN = 'khodam.app'; // دومين وهمي بيتحول بيه الاسم الكامل لإيميل داخلي وراء الكواليس
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -358,20 +365,6 @@ let state = {
 
 function normalizeName(n){
   return (n || '').trim().replace(/\s+/g, ' ');
-}
-
-// هاش بسيط وثابت (djb2) بيحوّل الاسم لمعرف إنجليزي آمن يُستخدم كإيميل داخلي وراء الكواليس
-function nameHash(str){
-  let hash = 5381;
-  for(let i = 0; i < str.length; i++){
-    hash = ((hash << 5) + hash) + str.charCodeAt(i);
-    hash = hash & 0xffffffff;
-  }
-  return (hash >>> 0).toString(16);
-}
-
-function nameToEmail(fullName){
-  return `u${nameHash(normalizeName(fullName))}@${EMAIL_DOMAIN}`;
 }
 
 function fmtDate(d){
@@ -413,24 +406,14 @@ async function loadProfile(){
 }
 
 /* ===================== تسجيل الدخول / الخروج ===================== */
-async function doLogin(fullName, password, btn){
+async function doLogin(email, password, btn){
   state.error = '';
-  if(!fullName || !password){ state.error='اكتب الاسم الكامل وكلمة المرور'; render(); return; }
+  if(!email || !password){ state.error='اكتب البريد الإلكتروني وكلمة المرور'; render(); return; }
   btn.disabled = true; btn.textContent = 'جاري الدخول...';
-  const loginKey = normalizeName(fullName);
-  const { data: lookup, error: lookupErr } = await supabase
-    .from('login_lookup')
-    .select('email')
-    .eq('login_key', loginKey)
-    .maybeSingle();
-  if(lookupErr || !lookup){
-    state.error = 'الاسم أو كلمة المرور غلط';
-    render();
-    return;
-  }
-  const { data, error } = await supabase.auth.signInWithPassword({ email: lookup.email, password });
+  
+  const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
   if(error){
-    state.error = 'الاسم أو كلمة المرور غلط';
+    state.error = 'البريد الإلكتروني أو كلمة المرور غلط';
     render();
     return;
   }
@@ -445,49 +428,32 @@ async function doLogout(){
   render();
 }
 
-/* ===================== التسجيل (إنشاء حساب) ===================== */
+/* ===================== التسجيل (إنشاء حساب مع حفظ مسودة) ===================== */
 async function doSignup(formEl, btn){
   state.error = '';
   const fd = new FormData(formEl);
   const password = fd.get('password')?.trim();
   const fullName = normalizeName(fd.get('full_name'));
   const phone = fd.get('phone')?.trim();
-  const contactEmail = fd.get('contact_email')?.trim();
+  const email = fd.get('email')?.trim();
   const birthDate = fd.get('birth_date');
   const studyYear = fd.get('study_year');
   const photoFile = document.getElementById('signup-photo-input').files[0];
 
-  if(!password || !fullName || !phone || !birthDate || !studyYear){
+  if(!password || !fullName || !phone || !email || !birthDate || !studyYear){
     state.error = 'من فضلك املأ كل الحقول المطلوبة';
-    render(); return;
-  }
-  if(fullName.split(' ').length < 2){
-    state.error = 'اكتب اسمك بالكامل (اسمين على الأقل) عشان نقدر نميزك عن غيرك';
     render(); return;
   }
   if(!photoFile){
     state.error = 'الصورة الشخصية إجبارية لإنشاء الحساب';
     render(); return;
   }
-  if(password.length < 6){
-    state.error = 'كلمة المرور لازم تكون 6 حروف/أرقام على الأقل';
-    render(); return;
-  }
 
   btn.disabled = true; btn.textContent = 'جاري إنشاء الحساب...';
 
-  // تأكد إن الاسم ده مش متسجل قبل كده
-  const { data: existing } = await supabase.from('login_lookup').select('login_key').eq('login_key', fullName).maybeSingle();
-  if(existing){
-    state.error = 'الاسم ده متسجل بحساب قبل كده. لو ده أنت فعلاً، جرّب تسجيل الدخول. ولو حد تاني بنفس الاسم، اكتب اسمك بالكامل زي في شهادة الميلاد (3 أسماء) عشان نميزكم عن بعض';
-    render(); return;
-  }
-
-  const email = nameToEmail(fullName);
-
   const { data: signData, error: signErr } = await supabase.auth.signUp({ email, password });
   if(signErr){
-    state.error = 'حصل خطأ: ' + signErr.message;
+    state.error = (signErr.message.includes('already registered')) ? 'البريد الإلكتروني ده مسجل بيه حساب قبل كده' : 'حصل خطأ: ' + signErr.message;
     render(); return;
   }
   const userId = signData.user.id;
@@ -506,7 +472,7 @@ async function doSignup(formEl, btn){
     id: userId,
     full_name: fullName,
     phone,
-    contact_email: contactEmail || null,
+    contact_email: email,
     birth_date: birthDate,
     study_year: studyYear,
     photo_url: pub.publicUrl,
@@ -517,15 +483,7 @@ async function doSignup(formEl, btn){
     render(); return;
   }
 
-  const { error: lookupInsErr } = await supabase.from('login_lookup').insert({
-    login_key: fullName,
-    email,
-    user_id: userId,
-  });
-  if(lookupInsErr){
-    state.error = 'حصل خطأ في إتمام التسجيل: ' + lookupInsErr.message;
-    render(); return;
-  }
+  localStorage.removeItem('signupDraft');
 
   const { data: { session } } = await supabase.auth.getSession();
   state.session = session;
@@ -533,7 +491,7 @@ async function doSignup(formEl, btn){
   render();
 }
 
-/* ===================== أدوات بيانات مشتركة ===================== */
+/* ===================== أدوات جلب البيانات ===================== */
 async function fetchAllStudents(){
   const { data } = await supabase.from('users').select('*').eq('role','student').order('full_name');
   return data || [];
@@ -551,7 +509,7 @@ async function fetchSessions(){
   return data || [];
 }
 
-/* ===================== الرندر الرئيسي ===================== */
+/* ===================== الرندر الرئيسي للواجهات ===================== */
 function render(){
   if(state.view === 'loading'){
     app.innerHTML = `<div class="centered-shell"><div class="loader"></div></div>`;
@@ -563,7 +521,7 @@ function render(){
   if(state.view === 'admin') return renderAdmin();
 }
 
-/* ===================== شاشة الدخول ===================== */
+/* ===================== شاشة تسجيل الدخول ===================== */
 function renderLogin(){
   app.innerHTML = `
   <div class="centered-shell">
@@ -575,12 +533,12 @@ function renderLogin(){
       ${state.error ? `<div class="error-box">${escapeHtml(state.error)}</div>` : ''}
       <form id="login-form">
         <div class="field">
-          <label>الاسم الكامل</label>
-          <input type="text" name="full_name" autocomplete="name" required>
+          <label>البريد الإلكتروني</label>
+          <input type="email" name="email" autocomplete="email" required dir="ltr" style="text-align:left;">
         </div>
         <div class="field">
           <label>كلمة المرور</label>
-          <input type="password" name="password" autocomplete="current-password" required>
+          <input type="password" name="password" autocomplete="current-password" required dir="ltr" style="text-align:left;">
         </div>
         <button type="submit" class="btn-primary" id="login-btn">تسجيل الدخول</button>
       </form>
@@ -591,7 +549,7 @@ function renderLogin(){
   document.getElementById('login-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    doLogin(fd.get('full_name'), fd.get('password'), document.getElementById('login-btn'));
+    doLogin(fd.get('email'), fd.get('password'), document.getElementById('login-btn'));
   });
   document.getElementById('go-signup').addEventListener('click', () => {
     state.view = 'signup'; state.error=''; render();
@@ -608,7 +566,6 @@ function renderSignup(){
         <p>بيانات الخادم / الدارس</p>
       </div>
       ${state.error ? `<div class="error-box">${escapeHtml(state.error)}</div>` : ''}
-      <div class="info-box">هتسجّل دخولك بعد كده بـ"الاسم الكامل" و"كلمة المرور"، فاكتب اسمك بالكامل (اسمين على الأقل) عشان محدش يشاركك نفس بيانات الدخول.</div>
       <form id="signup-form">
         <div class="photo-upload">
           <div class="photo-preview" id="photo-preview">لسه مفيش صورة</div>
@@ -622,8 +579,12 @@ function renderSignup(){
           <input type="text" name="full_name" required>
         </div>
         <div class="field">
+          <label>البريد الإلكتروني <span class="req">*</span></label>
+          <input type="email" name="email" required dir="ltr" style="text-align:left;">
+        </div>
+        <div class="field">
           <label>كلمة المرور <span class="req">*</span></label>
-          <input type="password" name="password" minlength="6" required>
+          <input type="password" name="password" minlength="6" required dir="ltr" style="text-align:left;">
         </div>
         <div class="field-row">
           <div class="field">
@@ -631,13 +592,9 @@ function renderSignup(){
             <input type="tel" name="phone" required>
           </div>
           <div class="field">
-            <label>البريد الإلكتروني (اختياري)</label>
-            <input type="email" name="contact_email">
+            <label>تاريخ الميلاد <span class="req">*</span></label>
+            <input type="date" name="birth_date" required>
           </div>
-        </div>
-        <div class="field">
-          <label>تاريخ الميلاد <span class="req">*</span></label>
-          <input type="date" name="birth_date" required>
         </div>
         <div class="field">
           <label>السنة الدراسية <span class="req">*</span></label>
@@ -652,6 +609,24 @@ function renderSignup(){
       <div class="switch-line">عندك حساب بالفعل؟ <button id="go-login">تسجيل الدخول</button></div>
     </div>
   </div>`;
+
+  const form = document.getElementById('signup-form');
+
+  // استرجاع المسودة التلقائية في المتصفح
+  const draft = JSON.parse(localStorage.getItem('signupDraft') || '{}');
+  Object.keys(draft).forEach(key => {
+    const input = form.querySelector(`[name="${key}"]`);
+    if(input) input.value = draft[key];
+  });
+
+  // حدث الكتابة لحفظ البيانات فوراً في الـ localStorage
+  form.addEventListener('input', (e) => {
+    if(e.target.name === 'password' || e.target.type === 'file') return;
+    const fd = new FormData(form);
+    const currentData = Object.fromEntries(fd.entries());
+    delete currentData.password;
+    localStorage.setItem('signupDraft', JSON.stringify(currentData));
+  });
 
   document.getElementById('go-login').addEventListener('click', () => { state.view='login'; state.error=''; render(); });
   document.getElementById('photo-trigger').addEventListener('click', () => document.getElementById('signup-photo-input').click());
@@ -668,14 +643,7 @@ function renderSignup(){
   });
 }
 
-/* ===================== قوالب مشتركة للداشبورد ===================== */
-function getInitials(fullName){
-  const parts = (fullName || '').trim().split(/\s+/).filter(Boolean);
-  if(parts.length === 0) return '؟';
-  if(parts.length === 1) return parts[0].slice(0,2);
-  return parts[0][0] + parts[1][0];
-}
-
+/* ===================== قوالب السياربار الجانبي ===================== */
 function sidebarHtml(items, activeKey, navAttr){
   const p = state.profile;
   return `
@@ -683,7 +651,7 @@ function sidebarHtml(items, activeKey, navAttr){
     <div class="brand-block">
       <div class="mark" style="padding:0;overflow:hidden;"><img src="${p.photo_url}" alt="" style="width:100%;height:100%;object-fit:cover;"></div>
       <h1>${escapeHtml(p.full_name)}</h1>
-      <p>${p.role==='admin'?'أدمن':'دارس'} — أسرة البابا شنودة لإعداد خدام</p>
+      <p>${p.role==='admin'?'أدمن':'دارس'} — إعداد خدام</p>
     </div>
     ${items.map(it => `<div class="nav-item ${it.key===activeKey?'active':''}" data-${navAttr}="${it.key}">${it.label}</div>`).join('')}
     <div class="sidebar-footer">
@@ -703,7 +671,7 @@ function attachSidebarEvents(navAttr, onNav){
   document.getElementById('logout-btn').addEventListener('click', doLogout);
 }
 
-/* ===================== لوحة الدارس ===================== */
+/* ===================== لوحة التحكم للدارس ===================== */
 async function renderStudent(){
   const tabs = [
     { key:'profile', label:'بياناتي' },
@@ -751,7 +719,7 @@ async function renderStudentScores(main){
 
   main.innerHTML = `
   <div class="page-head no-print">
-    <div><h2>درجاتي</h2><p class="sub">نتيجة كل امتحان بمجرد رصدها</p></div>
+    <div><h2>درجاتي</h2><p class="sub">نتيجة امتحانات مستواك بمجرد رصدها</p></div>
     <button class="btn-outline" id="print-btn">🖨 طباعة / تصدير</button>
   </div>
   <div class="panel">
@@ -791,7 +759,7 @@ async function renderStudentAttendance(main){
   const rate = total ? Math.round((presentCount/total)*100) : 0;
 
   main.innerHTML = `
-  <div class="page-head"><div><h2>حضوري</h2><p class="sub">نسبة الحضور والغياب في اللقاءات</p></div></div>
+  <div class="page-head"><div><h2>حضوري</h2><p class="sub">نسبة الحضور والغياب الإجمالية</p></div></div>
   <div class="stat-grid">
     <div class="stat-card gold-accent"><div class="v">${rate}%</div><div class="l">نسبة الحضور</div></div>
     <div class="stat-card"><div class="v">${presentCount}</div><div class="l">لقاءات حضرتها</div></div>
@@ -813,7 +781,7 @@ async function renderStudentAttendance(main){
   </div>`;
 }
 
-/* ===================== لوحة الأدمن ===================== */
+/* ===================== لوحة التحكم للأدمن ===================== */
 async function renderAdmin(){
   const tabs = [
     { key:'overview', label:'نظرة عامة' },
@@ -854,30 +822,15 @@ async function renderAdminOverview(main){
   }
 
   main.innerHTML = `
-  <div class="page-head"><div><h2>نظرة عامة</h2><p class="sub">ملخص سريع على نشاط المنصة</p></div></div>
+  <div class="page-head"><div><h2>نظرة عامة</h2><p class="sub">ملخص سريع وشامل لنشاط النظام</p></div></div>
   <div class="panel">
     <h3>إجراءات سريعة</h3>
     <div class="quick-actions">
-      <button class="quick-action-btn" data-qa="lookup">
-        <span class="qa-icon">🔍</span>
-        <span class="qa-label">بحث عن دارس</span>
-      </button>
-      <button class="quick-action-btn" data-qa="exams">
-        <span class="qa-icon">📝</span>
-        <span class="qa-label">إضافة امتحان جديد</span>
-      </button>
-      <button class="quick-action-btn" data-qa="scores">
-        <span class="qa-icon">✅</span>
-        <span class="qa-label">رصد الدرجات</span>
-      </button>
-      <button class="quick-action-btn" data-qa="attendance">
-        <span class="qa-icon">📋</span>
-        <span class="qa-label">تسجيل الحضور</span>
-      </button>
-      <button class="quick-action-btn" data-qa="students">
-        <span class="qa-icon">👥</span>
-        <span class="qa-label">قائمة الدارسين</span>
-      </button>
+      <button class="quick-action-btn" data-qa="lookup"><span class="qa-icon">🔍</span><span class="qa-label">بحث عن دارس</span></button>
+      <button class="quick-action-btn" data-qa="exams"><span class="qa-icon">📝</span><span class="qa-label">إضافة امتحان جديد</span></button>
+      <button class="quick-action-btn" data-qa="scores"><span class="qa-icon">✅</span><span class="qa-label">رصد الدرجات</span></button>
+      <button class="quick-action-btn" data-qa="attendance"><span class="qa-icon">📋</span><span class="qa-label">تسجيل الحضور</span></button>
+      <button class="quick-action-btn" data-qa="students"><span class="qa-icon">👥</span><span class="qa-label">قائمة الدارسين</span></button>
     </div>
   </div>
   <div class="stat-grid">
@@ -886,61 +839,42 @@ async function renderAdminOverview(main){
     <div class="stat-card"><div class="v">${sessions.length}</div><div class="l">عدد لقاءات الحضور</div></div>
     <div class="stat-card"><div class="v">${avgPct}</div><div class="l">متوسط الدرجات العام</div></div>
     <div class="stat-card"><div class="v">${attRate}</div><div class="l">نسبة الحضور العامة</div></div>
-  </div>
-  <div class="panel">
-    <h3>آخر الامتحانات</h3>
-    ${exams.length===0 ? `<div class="empty-state">لسه مفيش امتحانات</div>` : `
-    <table><thead><tr><th>الاسم</th><th>المادة</th><th>التاريخ</th><th>الدرجة النهائية</th></tr></thead>
-    <tbody>${exams.slice(0,5).map(e=>`<tr><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.subject||'—')}</td><td>${fmtDate(e.exam_date)}</td><td>${e.max_score}</td></tr>`).join('')}</tbody></table>`}
   </div>`;
 
   main.querySelectorAll('[data-qa]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      state.adminTab = btn.dataset.qa;
-      renderAdmin();
-    });
+    btn.addEventListener('click', () => { state.adminTab = btn.dataset.qa; renderAdmin(); });
   });
 }
 
-/* ===================== بحث عن دارس وعرض كل بياناته ===================== */
 async function renderAdminLookup(main, query='', selectedId=''){
   const students = await fetchAllUsers();
-  const matches = query.trim() === '' ? [] : students.filter(s =>
-    s.full_name.toLowerCase().includes(query.trim().toLowerCase())
-  );
+  const matches = query.trim() === '' ? [] : students.filter(s => s.full_name.toLowerCase().includes(query.trim().toLowerCase()));
 
   main.innerHTML = `
-  <div class="page-head"><div><h2>بحث عن دارس</h2><p class="sub">اكتب اسم أي دارس أو أدمن وشوف كل بياناته، درجاته، وحضوره في مكان واحد</p></div></div>
+  <div class="page-head"><div><h2>بحث عن دارس</h2><p class="sub">اكتب الاسم وشوف كل كشف درجاته وحضوره بالتفصيل</p></div></div>
   <div class="panel">
-    <div class="toolbar"><input type="text" class="grow" id="lookup-search" placeholder="اكتب الاسم هنا..." value="${escapeHtml(query)}" autofocus></div>
+    <div class="toolbar"><input type="text" class="grow" id="lookup-search" placeholder="اكتب اسم الخادم هنا..." value="${escapeHtml(query)}" autofocus></div>
     <div id="lookup-results"></div>
   </div>
   <div id="lookup-detail"></div>`;
 
   const resultsWrap = document.getElementById('lookup-results');
-  const renderMatchList = () => {
-    if(query.trim() === ''){ resultsWrap.innerHTML = ''; return; }
+  if(query.trim() !== ''){
     resultsWrap.innerHTML = matches.length === 0
-      ? `<div class="empty-state">مفيش حد بالاسم ده</div>`
+      ? `<div class="empty-state">مفيش نتائج مطابقة للأسف</div>`
       : `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">${matches.map(s => `
           <button class="btn-outline" style="display:flex;align-items:center;gap:10px;justify-content:flex-start;text-align:right;padding:10px 14px;" data-pick="${s.id}">
             <img class="row-photo" src="${s.photo_url}">
             <span>${escapeHtml(s.full_name)}</span>
-            <span class="badge role-${s.role}" style="margin-right:auto;">${s.role==='admin'?'أدمن':'دارس'}</span>
+            <span class="badge role-${s.role}" style="margin-right:auto;">${s.role==='admin'?'أدمن':'دارس'} — ${escapeHtml(s.study_year)}</span>
           </button>`).join('')}</div>`;
     resultsWrap.querySelectorAll('[data-pick]').forEach(btn => {
       btn.addEventListener('click', () => renderAdminLookup(main, query, btn.dataset.pick));
     });
-  };
-  renderMatchList();
-
-  document.getElementById('lookup-search').addEventListener('input', (e) => {
-    renderAdminLookup(main, e.target.value, '');
-  });
-
-  if(selectedId){
-    await renderLookupDetail(selectedId);
   }
+
+  document.getElementById('lookup-search').addEventListener('input', (e) => { renderAdminLookup(main, e.target.value, ''); });
+  if(selectedId) await renderLookupDetail(selectedId);
 }
 
 async function renderLookupDetail(userId){
@@ -948,19 +882,16 @@ async function renderLookupDetail(userId){
   detailWrap.innerHTML = `<div class="loader"></div>`;
 
   const { data: p } = await supabase.from('users').select('*').eq('id', userId).single();
-  if(!p){ detailWrap.innerHTML = `<div class="empty-state">تعذر تحميل بيانات الحساب</div>`; return; }
+  if(!p){ detailWrap.innerHTML = `<div class="empty-state">تعذر جلب بيانات الحساب</div>`; return; }
 
-  const { data: scores } = await supabase
-    .from('scores')
-    .select('score, exam_id, exams(name, subject, exam_date, max_score, passing_score)')
-    .eq('user_id', userId);
-  const { data: records } = await supabase
-    .from('attendance_records')
-    .select('status, session_id, attendance_sessions(name, session_date)')
-    .eq('user_id', userId);
+  const [scoresRes, recordsRes] = await Promise.all([
+    supabase.from('scores').select('score, exams(name, subject, exam_date, max_score, passing_score)').eq('user_id', userId),
+    supabase.from('attendance_records').select('status, notes, attendance_sessions(name, session_date)').eq('user_id', userId)
+  ]);
 
-  const scoreRows = (scores||[]).filter(s=>s.exams).sort((a,b)=>new Date(b.exams.exam_date)-new Date(a.exams.exam_date));
-  const attRows = (records||[]).filter(r=>r.attendance_sessions).sort((a,b)=>new Date(b.attendance_sessions.session_date)-new Date(a.attendance_sessions.session_date));
+  const scoreRows = (scoresRes.data||[]).filter(s=>s.exams).sort((a,b)=>new Date(b.exams.exam_date)-new Date(a.exams.exam_date));
+  const attRows = (recordsRes.data||[]).filter(r=>r.attendance_sessions).sort((a,b)=>new Date(b.attendance_sessions.session_date)-new Date(a.attendance_sessions.session_date));
+  
   const presentCount = attRows.filter(r=>r.status==='present').length;
   const attRate = attRows.length ? Math.round((presentCount/attRows.length)*100) : 0;
   let avgPct = '—';
@@ -970,7 +901,7 @@ async function renderLookupDetail(userId){
   }
 
   detailWrap.innerHTML = `
-  <div class="panel">
+  <div class="panel" style="margin-top:20px;">
     <div class="profile-card">
       <img src="${p.photo_url}" alt="">
       <div>
@@ -989,47 +920,45 @@ async function renderLookupDetail(userId){
     <div class="stat-card gold-accent"><div class="v">${avgPct}</div><div class="l">متوسط الدرجات</div></div>
     <div class="stat-card"><div class="v">${attRate}%</div><div class="l">نسبة الحضور</div></div>
     <div class="stat-card"><div class="v">${scoreRows.length}</div><div class="l">امتحانات مرصودة</div></div>
-    <div class="stat-card"><div class="v">${attRows.length}</div><div class="l">لقاءات مسجّلة</div></div>
+    <div class="stat-card"><div class="v">${presentCount}/${attRows.length}</div><div class="l">مرات الحضور</div></div>
   </div>
   <div class="panel">
-    <h3>الدرجات</h3>
-    ${scoreRows.length===0 ? `<div class="empty-state">لسه مفيش درجات مرصودة</div>` : `
+    <h3>كشف الدرجات</h3>
+    ${scoreRows.length===0 ? `<div class="empty-state">مفيش درجات مرصودة للشخص ده</div>` : `
     <table>
       <thead><tr><th>الامتحان</th><th>المادة</th><th>التاريخ</th><th>الدرجة</th><th>النسبة</th><th>الحالة</th></tr></thead>
       <tbody>${scoreRows.map(r => {
         const pct = Math.round((r.score/r.exams.max_score)*100);
         const passed = pct >= (r.exams.passing_score||50);
         return `<tr>
-          <td>${escapeHtml(r.exams.name)}</td>
-          <td>${escapeHtml(r.exams.subject||'—')}</td>
-          <td>${fmtDate(r.exams.exam_date)}</td>
-          <td>${r.score} / ${r.exams.max_score}</td>
-          <td>${pct}%</td>
+          <td>${escapeHtml(r.exams.name)}</td><td>${escapeHtml(r.exams.subject||'—')}</td><td>${fmtDate(r.exams.exam_date)}</td>
+          <td>${r.score} / ${r.exams.max_score}</td><td>${pct}%</td>
           <td><span class="badge ${passed?'pass':'fail'}">${passed?'ناجح':'أقل من المطلوب'}</span></td>
         </tr>`;
       }).join('')}</tbody>
     </table>`}
   </div>
   <div class="panel">
-    <h3>الحضور</h3>
-    ${attRows.length===0 ? `<div class="empty-state">لسه مفيش سجل حضور</div>` : `
+    <h3>سجل الحضور والملاحظات</h3>
+    ${attRows.length===0 ? `<div class="empty-state">مفيش سجل حضور مسجل</div>` : `
     <table>
-      <thead><tr><th>اللقاء</th><th>التاريخ</th><th>الحالة</th></tr></thead>
+      <thead><tr><th>اللقاء</th><th>التاريخ</th><th>الحالة</th><th>الملاحظات</th></tr></thead>
       <tbody>${attRows.map(r => `<tr>
-        <td>${escapeHtml(r.attendance_sessions.name)}</td>
-        <td>${fmtDate(r.attendance_sessions.session_date)}</td>
+        <td>${escapeHtml(r.attendance_sessions.name)}</td><td>${fmtDate(r.attendance_sessions.session_date)}</td>
         <td><span class="badge ${r.status}">${r.status==='present'?'حاضر':'غايب'}</span></td>
+        <td><span style="font-size:13px; color:var(--gray-mid);">${escapeHtml(r.notes || '—')}</span></td>
       </tr>`).join('')}</tbody>
     </table>`}
   </div>`;
 }
 
+/* ===================== إدارة الامتحانات (ربطها بالمستويات) ===================== */
 async function renderAdminExams(main){
   const exams = await fetchExams();
   main.innerHTML = `
-  <div class="page-head"><div><h2>الامتحانات</h2><p class="sub">إضافة وإدارة الامتحانات</p></div></div>
+  <div class="page-head"><div><h2>الامتحانات والمواد</h2><p class="sub">إضافة الامتحانات وتحديد الصف المستهدف لها</p></div></div>
   <div class="panel">
-    <h3>إضافة امتحان جديد</h3>
+    <h3>إضافة مادة / امتحان جديد</h3>
     ${state.error ? `<div class="error-box">${escapeHtml(state.error)}</div>` : ''}
     <form id="exam-form">
       <div class="field-row">
@@ -1037,7 +966,16 @@ async function renderAdminExams(main){
         <div class="field"><label>المادة</label><input type="text" name="subject"></div>
       </div>
       <div class="field-row">
+        <div class="field"><label>الصف المستهدف *</label>
+          <select name="study_year" required>
+            <option value="الصف الأول">الصف الأول</option>
+            <option value="الصف الثاني">الصف الثاني</option>
+            <option value="عام">عام (لكل الدارسين)</option>
+          </select>
+        </div>
         <div class="field"><label>تاريخ الامتحان *</label><input type="date" name="exam_date" required></div>
+      </div>
+      <div class="field-row">
         <div class="field"><label>الدرجة النهائية *</label><input type="number" name="max_score" value="100" min="1" required></div>
         <div class="field"><label>درجة النجاح (%) *</label><input type="number" name="passing_score" value="50" min="1" max="100" required></div>
       </div>
@@ -1045,28 +983,26 @@ async function renderAdminExams(main){
     </form>
   </div>
   <div class="panel">
-    <h3>كل الامتحانات (${exams.length})</h3>
+    <h3>كل الامتحانات والمواد المضافة (${exams.length})</h3>
     ${exams.length===0 ? `<div class="empty-state">لسه مفيش امتحانات مضافة</div>` : `
-    <table><thead><tr><th>الاسم</th><th>المادة</th><th>التاريخ</th><th>النهائية</th><th>النجاح</th><th></th></tr></thead>
+    <table><thead><tr><th>الامتحان</th><th>المادة</th><th>الصف المستهدف</th><th>التاريخ</th><th>الدرجة</th><th>إجراءات</th></tr></thead>
     <tbody>${exams.map(e=>`<tr>
-      <td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.subject||'—')}</td><td>${fmtDate(e.exam_date)}</td>
-      <td>${e.max_score}</td><td>${e.passing_score}%</td>
+      <td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.subject||'—')}</td>
+      <td><span class="badge present">${escapeHtml(e.study_year)}</span></td>
+      <td>${fmtDate(e.exam_date)}</td><td>${e.max_score}</td>
       <td><button class="btn-danger" data-del-exam="${e.id}">حذف</button></td>
     </tr>`).join('')}</tbody></table>`}
   </div>`;
 
   document.getElementById('exam-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    state.error='';
+    e.preventDefault(); state.error='';
     const fd = new FormData(e.target);
     const btn = document.getElementById('exam-submit');
     btn.disabled = true; btn.textContent = 'جاري الإضافة...';
     const { error } = await supabase.from('exams').insert({
-      name: fd.get('name'),
-      subject: fd.get('subject') || null,
-      exam_date: fd.get('exam_date'),
-      max_score: Number(fd.get('max_score')),
-      passing_score: Number(fd.get('passing_score')),
+      name: fd.get('name'), subject: fd.get('subject') || null,
+      exam_date: fd.get('exam_date'), max_score: Number(fd.get('max_score')),
+      passing_score: Number(fd.get('passing_score')), study_year: fd.get('study_year'),
       created_by: state.profile.id,
     });
     if(error){ state.error = 'حصل خطأ: ' + error.message; }
@@ -1075,24 +1011,25 @@ async function renderAdminExams(main){
 
   main.querySelectorAll('[data-del-exam]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      if(!confirm('متأكد من حذف الامتحان ده؟ هيتحذف معاه كل الدرجات المرتبطة بيه')) return;
+      if(!confirm('متأكد من حذف الامتحان ده؟ هيتحذف معاه كل الدرجات المربوطة بيه')) return;
       await supabase.from('exams').delete().eq('id', btn.dataset.delExam);
       renderAdminExams(main);
     });
   });
 }
 
+/* ===================== رصد الدرجات (حسب صف المادة) ===================== */
 async function renderAdminScores(main, filterText='', selectedExamId=''){
   const exams = await fetchExams();
   if(!selectedExamId && exams.length) selectedExamId = exams[0].id;
 
   main.innerHTML = `
-  <div class="page-head"><div><h2>رصد الدرجات</h2><p class="sub">اختر امتحان وسجّل أو عدّل درجة كل دارس</p></div></div>
+  <div class="page-head"><div><h2>رصد الدرجات</h2><p class="sub">رصد وتعديل درجات الدارسين للمستوى المعني بالامتحان</p></div></div>
   <div class="panel">
-    ${exams.length===0 ? `<div class="empty-state">لازم تضيف امتحان الأول من تبويب "الامتحانات"</div>` : `
+    ${exams.length===0 ? `<div class="empty-state">لازم تضيف مادة أو امتحان الأول من صفحة الامتحانات</div>` : `
     <div class="toolbar">
-      <select id="exam-select">${exams.map(e=>`<option value="${e.id}" ${e.id===selectedExamId?'selected':''}>${escapeHtml(e.name)} — ${fmtDate(e.exam_date)}</option>`).join('')}</select>
-      <input type="text" class="grow" id="search-input" placeholder="بحث بالاسم أو القطاع..." value="${escapeHtml(filterText)}">
+      <select id="exam-select">${exams.map(e=>`<option value="${e.id}" ${e.id===selectedExamId?'selected':''}>${escapeHtml(e.name)} (${escapeHtml(e.study_year)})</option>`).join('')}</select>
+      <input type="text" class="grow" id="search-input" placeholder="بحث باسم الدارس..." value="${escapeHtml(filterText)}">
     </div>
     <div id="scores-table-wrap"><div class="loader"></div></div>`}
   </div>`;
@@ -1119,24 +1056,24 @@ async function renderScoresTable(examId, filterText){
   const scoreMap = {};
   (existing||[]).forEach(s => scoreMap[s.user_id] = s);
 
+  // فلترة الطلاب بناء على الصف المخصص للمادة (لو عام تظهر للكل)
   const filtered = students.filter(s =>
-    !filterText ||
-    s.full_name.toLowerCase().includes(filterText.toLowerCase()) ||
-    (s.study_year||'').toLowerCase().includes(filterText.toLowerCase())
+    (exam.study_year === 'عام' || s.study_year === exam.study_year) &&
+    (!filterText || s.full_name.toLowerCase().includes(filterText.toLowerCase()))
   );
 
-  wrap.innerHTML = filtered.length===0 ? `<div class="empty-state">مفيش نتائج مطابقة</div>` : `
+  wrap.innerHTML = filtered.length===0 ? `<div class="empty-state">مفيش دارسين في هذا الصف مطابقين للبحث</div>` : `
   <table>
-    <thead><tr><th>الدارس</th><th>السنة الدراسية</th><th>الدرجة (من ${exam.max_score})</th><th>الحالة</th><th></th></tr></thead>
+    <thead><tr><th>الدارس</th><th>الصف الدراسي</th><th>الدرجة (من ${exam.max_score})</th><th>الحالة</th><th>إجراء</th></tr></thead>
     <tbody>${filtered.map(s => {
       const existingScore = scoreMap[s.id];
       const pct = existingScore ? Math.round((existingScore.score/exam.max_score)*100) : null;
       const passed = pct !== null ? pct >= exam.passing_score : null;
       return `<tr>
         <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
-        <td>${escapeHtml(s.study_year||'—')}</td>
+        <td>${escapeHtml(s.study_year)}</td>
         <td><input type="number" class="score-input" min="0" max="${exam.max_score}" data-user="${s.id}" value="${existingScore ? existingScore.score : ''}"></td>
-        <td>${pct===null ? '<span style="color:var(--gray-mid);font-size:12.5px;">لسه ماترصدتش</span>' : `<span class="badge ${passed?'pass':'fail'}">${pct}%</span>`}</td>
+        <td>${pct===null ? '<span style="color:var(--gray-mid);font-size:12.5px;">لم ترصد بعد</span>' : `<span class="badge ${passed?'pass':'fail'}">${pct}%</span>`}</td>
         <td><button class="mini-btn" data-save="${s.id}">حفظ</button></td>
       </tr>`;
     }).join('')}</tbody>
@@ -1147,24 +1084,26 @@ async function renderScoresTable(examId, filterText){
       const userId = btn.dataset.save;
       const input = wrap.querySelector(`.score-input[data-user="${userId}"]`);
       const val = Number(input.value);
-      if(input.value === '' || isNaN(val)){ alert('اكتب درجة صحيحة'); return; }
+      if(input.value === '' || isNaN(val)){ alert('اكتب درجة صحيحة مئوية'); return; }
       btn.disabled = true; btn.textContent = '...';
-      const { error } = await supabase.from('scores').upsert({
+      
+      await supabase.from('scores').upsert({
         exam_id: examId, user_id: userId, score: val, updated_at: new Date().toISOString()
       }, { onConflict: 'exam_id,user_id' });
-      if(error){ alert('حصل خطأ: ' + error.message); btn.disabled=false; btn.textContent='حفظ'; return; }
+      
       btn.textContent = 'تم ✓'; btn.classList.add('saved');
       setTimeout(() => renderScoresTable(examId, document.getElementById('search-input')?.value || ''), 500);
     });
   });
 }
 
+/* ===================== الحضور ونظام التابات والملاحظات ===================== */
 async function renderAdminAttendance(main, selectedSessionId=''){
   const sessions = await fetchSessions();
   if(!selectedSessionId && sessions.length) selectedSessionId = sessions[0].id;
 
   main.innerHTML = `
-  <div class="page-head"><div><h2>الحضور</h2><p class="sub">إنشاء لقاءات وتسجيل حضور الدارسين</p></div></div>
+  <div class="page-head"><div><h2>سجلات الحضور واللقاءات</h2><p class="sub">تسجيل غياب وحضور الخدام وإضافة ملاحظات التخلف أو المواعيد</p></div></div>
   <div class="panel">
     <h3>إنشاء لقاء جديد</h3>
     <form id="session-form">
@@ -1176,9 +1115,9 @@ async function renderAdminAttendance(main, selectedSessionId=''){
     </form>
   </div>
   <div class="panel">
-    <h3>تسجيل الحضور</h3>
-    ${sessions.length===0 ? `<div class="empty-state">لازم تضيف لقاء الأول</div>` : `
-    <div class="toolbar">
+    <h3>دفتر تسجيل الحضور</h3>
+    ${sessions.length===0 ? `<div class="empty-state">لازم تضيف لقاء الأول علشان تحضر فيه</div>` : `
+    <div class="toolbar" style="margin-bottom:15px;">
       <select id="session-select">${sessions.map(s=>`<option value="${s.id}" ${s.id===selectedSessionId?'selected':''}>${escapeHtml(s.name)} — ${fmtDate(s.session_date)}</option>`).join('')}</select>
     </div>
     <div id="attendance-table-wrap"><div class="loader"></div></div>`}
@@ -1200,90 +1139,185 @@ async function renderAdminAttendance(main, selectedSessionId=''){
   await renderAttendanceTable(selectedSessionId);
 }
 
-async function renderAttendanceTable(sessionId){
+async function renderAttendanceTable(sessionId, activeYear = 'الصف الأول'){
   const wrap = document.getElementById('attendance-table-wrap');
   const students = await fetchAllStudents();
   const { data: existing } = await supabase.from('attendance_records').select('*').eq('session_id', sessionId);
   const map = {};
-  (existing||[]).forEach(r => map[r.user_id] = r.status);
+  (existing||[]).forEach(r => map[r.user_id] = r);
 
-  wrap.innerHTML = students.length===0 ? `<div class="empty-state">لسه مفيش دارسين مسجلين</div>` : `
+  const filteredStudents = students.filter(s => s.study_year === activeYear);
+
+  wrap.innerHTML = `
+  <div class="sub-tabs">
+    <div class="sub-tab ${activeYear==='الصف الأول'?'active':''}" data-year="الصف الأول">الصف الأول (${students.filter(s=>s.study_year==='الصف الأول').length})</div>
+    <div class="sub-tab ${activeYear==='الصف الثاني'?'active':''}" data-year="الصف الثاني">الصف الثاني (${students.filter(s=>s.study_year==='الصف الثاني').length})</div>
+  </div>
+  ${filteredStudents.length===0 ? `<div class="empty-state">مفيش دارسين مسجلين في ${activeYear} حالياً</div>` : `
   <table>
-    <thead><tr><th>الدارس</th><th>السنة الدراسية</th><th>الحالة</th></tr></thead>
-    <tbody>${students.map(s => `<tr>
-      <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
-      <td>${escapeHtml(s.study_year||'—')}</td>
-      <td>
-        <div class="att-toggle">
-          <button class="att-btn present ${map[s.id]==='present'?'on':''}" data-att="${s.id}" data-status="present">حاضر</button>
-          <button class="att-btn absent ${map[s.id]==='absent'?'on':''}" data-att="${s.id}" data-status="absent">غايب</button>
-        </div>
-      </td>
-    </tr>`).join('')}</tbody>
-  </table>`;
+    <thead><tr><th>الدارس</th><th>الحالة العامة</th><th>ملاحظات (الوقت / التأخير..)</th></tr></thead>
+    <tbody>${filteredStudents.map(s => {
+      const rec = map[s.id] || {};
+      return `<tr>
+        <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
+        <td>
+          <div class="att-toggle">
+            <button class="att-btn present ${rec.status==='present'?'on':''}" data-att="${s.id}" data-status="present">حاضر</button>
+            <button class="att-btn absent ${rec.status==='absent'?'on':''}" data-att="${s.id}" data-status="absent">غايب</button>
+          </div>
+        </td>
+        <td><input type="text" class="note-input" placeholder="مثال: متأخر 15 دقيقة" data-note="${s.id}" value="${escapeHtml(rec.notes||'')}"></td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`}`;
+
+  wrap.querySelectorAll('.sub-tab').forEach(tab => {
+    tab.addEventListener('click', () => renderAttendanceTable(sessionId, tab.dataset.year));
+  });
 
   wrap.querySelectorAll('[data-att]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const userId = btn.dataset.att;
-      const status = btn.dataset.status;
+      const userId = btn.dataset.att; const status = btn.dataset.status;
+      const noteInput = wrap.querySelector(`.note-input[data-note="${userId}"]`);
       await supabase.from('attendance_records').upsert({
-        session_id: sessionId, user_id: userId, status
+        session_id: sessionId, user_id: userId, status, notes: noteInput.value
       }, { onConflict: 'session_id,user_id' });
-      renderAttendanceTable(sessionId);
+      renderAttendanceTable(sessionId, activeYear);
+    });
+  });
+
+  wrap.querySelectorAll('.note-input').forEach(input => {
+    input.addEventListener('change', async () => {
+      const userId = input.dataset.note;
+      const rec = map[userId] || {};
+      await supabase.from('attendance_records').upsert({
+        session_id: sessionId, user_id: userId, notes: input.value, status: rec.status || 'absent'
+      }, { onConflict: 'session_id,user_id' });
     });
   });
 }
 
-async function renderAdminStudents(main, filterText=''){
+/* ===================== عرض وتعديل بيانات الدارس بالكامل ===================== */
+async function renderAdminStudents(main, filterText='', activeYear='الكل'){
   const students = await fetchAllUsers();
-  const filtered = students.filter(s =>
-    !filterText ||
-    s.full_name.toLowerCase().includes(filterText.toLowerCase()) ||
-    (s.study_year||'').toLowerCase().includes(filterText.toLowerCase())
+  
+  const filtered = students.filter(s => 
+    (activeYear === 'الكل' || s.study_year === activeYear) &&
+    (!filterText || s.full_name.toLowerCase().includes(filterText.toLowerCase()))
   );
 
   main.innerHTML = `
-  <div class="page-head"><div><h2>الدارسون</h2><p class="sub">كل الحسابات المسجلة (${students.length}) — تقدر تغيّر دور أي حساب بين "دارس" و"أدمن"</p></div></div>
+  <div class="page-head"><div><h2>إدارة حسابات الدارسين</h2><p class="sub">تعديل بيانات الدارس بالكامل وتحديث مستوى صفوفهم</p></div></div>
   <div class="panel">
-    <div class="toolbar"><input type="text" class="grow" id="student-search" placeholder="بحث بالاسم أو السنة الدراسية..." value="${escapeHtml(filterText)}"></div>
-    ${filtered.length===0 ? `<div class="empty-state">مفيش نتائج</div>` : `
+    <div class="toolbar" style="margin-bottom:20px;">
+      <input type="text" class="grow" id="student-search" placeholder="بحث بالاسم..." value="${escapeHtml(filterText)}">
+      <select id="year-filter">
+        <option value="الكل" ${activeYear==='الكل'?'selected':''}>كل الصفوف الدراسية</option>
+        <option value="الصف الأول" ${activeYear==='الصف الأول'?'selected':''}>الصف الأول</option>
+        <option value="الصف الثاني" ${activeYear==='الصف الثاني'?'selected':''}>الصف الثاني</option>
+      </select>
+    </div>
+    ${filtered.length===0 ? `<div class="empty-state">مفيش نتائج مطابقة للبحث</div>` : `
     <table>
-      <thead><tr><th>الصورة</th><th>الاسم</th><th>الموبايل</th><th>الإيميل</th><th>تاريخ الميلاد</th><th>السنة الدراسية</th><th>الدور</th><th></th></tr></thead>
+      <thead><tr><th>الاسم</th><th>الموبايل</th><th>البريد الإلكتروني</th><th>الصف</th><th>الدور</th><th>إجراءات الإشراف</th></tr></thead>
       <tbody>${filtered.map(s => `<tr>
-        <td><img class="row-photo" src="${s.photo_url}"></td>
-        <td>${escapeHtml(s.full_name)}</td>
+        <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
         <td>${escapeHtml(s.phone||'—')}</td>
         <td>${escapeHtml(s.contact_email||'—')}</td>
-        <td>${fmtDate(s.birth_date)}</td>
-        <td>${escapeHtml(s.study_year||'—')}</td>
+        <td><span class="badge present">${escapeHtml(s.study_year||'—')}</span></td>
         <td><span class="badge role-${s.role}">${s.role==='admin'?'أدمن':'دارس'}</span></td>
-        <td><button class="btn-outline" data-toggle-role="${s.id}" data-current-role="${s.role}" ${s.id===state.profile.id?'disabled title="مينفعش تغيّر دورك انت"':''}>${s.role==='admin'?'خليه دارس':'خليه أدمن'}</button></td>
+        <td>
+          <div style="display:flex; gap:6px;">
+            <button class="btn-outline" data-edit="${s.id}">📝 تعديل البيانات</button>
+            <button class="btn-outline" data-toggle-role="${s.id}" data-current-role="${s.role}" ${s.id===state.profile.id?'disabled':''}>تبديل الرتبة</button>
+          </div>
+        </td>
       </tr>`).join('')}</tbody>
     </table>`}
   </div>`;
 
-  main.querySelectorAll('[data-toggle-role]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const userId = btn.dataset.toggleRole;
-      const current = btn.dataset.currentRole;
-      const newRole = current === 'admin' ? 'student' : 'admin';
-      const label = newRole === 'admin' ? 'أدمن' : 'دارس';
-      if(!confirm(`متأكد إنك عايز تخلي الحساب ده "${label}"؟`)) return;
-      btn.disabled = true; btn.textContent = '...';
-      const { error } = await supabase.from('users').update({ role: newRole }).eq('id', userId);
-      if(error){ alert('حصل خطأ: ' + error.message); }
-      renderAdminStudents(main, filterText);
-    });
+  document.getElementById('year-filter').addEventListener('change', (e) => {
+    renderAdminStudents(main, document.getElementById('student-search').value, e.target.value);
   });
 
   let t;
   document.getElementById('student-search').addEventListener('input', (e) => {
     clearTimeout(t);
-    t = setTimeout(() => renderAdminStudents(main, e.target.value), 250);
+    t = setTimeout(() => renderAdminStudents(main, e.target.value, document.getElementById('year-filter').value), 250);
+  });
+
+  main.querySelectorAll('[data-toggle-role]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const userId = btn.dataset.toggleRole;
+      const newRole = btn.dataset.currentRole === 'admin' ? 'student' : 'admin';
+      if(!confirm(`متأكد من تحويل صلاحية هذا الحساب؟`)) return;
+      await supabase.from('users').update({ role: newRole }).eq('id', userId);
+      renderAdminStudents(main, filterText, activeYear);
+    });
+  });
+
+  main.querySelectorAll('[data-edit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const userToEdit = students.find(u => u.id === btn.dataset.edit);
+      openEditStudentModal(userToEdit, () => renderAdminStudents(main, filterText, activeYear));
+    });
   });
 }
 
-/* ===================== بداية التشغيل ===================== */
+function openEditStudentModal(user, onSaveComplete) {
+  const modalHTML = `
+  <div class="modal-overlay" id="edit-modal">
+    <div class="modal-content">
+      <h3 style="margin-top:0; color:var(--royal-blue); border-bottom:1px solid var(--gray-line); padding-bottom:10px;">تعديل بيانات الدارس بالكامل</h3>
+      <form id="edit-student-form">
+        <div class="field"><label>الاسم الكامل</label><input type="text" name="full_name" value="${escapeHtml(user.full_name)}" required></div>
+        <div class="field-row">
+          <div class="field"><label>رقم الموبايل</label><input type="tel" name="phone" value="${escapeHtml(user.phone||'')}" required></div>
+          <div class="field"><label>تاريخ الميلاد</label><input type="date" name="birth_date" value="${user.birth_date||''}" required></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>البريد الإلكتروني</label><input type="email" name="contact_email" value="${escapeHtml(user.contact_email||'')}"></div>
+          <div class="field"><label>السنة الدراسية (الصف)</label>
+            <select name="study_year" required>
+              <option value="الصف الأول" ${user.study_year==='الصف الأول'?'selected':''}>الصف الأول</option>
+              <option value="الصف الثاني" ${user.study_year==='الصف الثاني'?'selected':''}>الصف الثاني</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-outline" id="close-modal">إلغاء</button>
+          <button type="submit" class="btn-primary" id="save-modal" style="width:auto;">حفظ البيانات الجديدة</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+  
+  document.body.insertAdjacentHTML('beforeend', modalHTML);
+  const modal = document.getElementById('edit-modal');
+  
+  document.getElementById('close-modal').addEventListener('click', () => modal.remove());
+  
+  document.getElementById('edit-student-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('save-modal');
+    btn.disabled = true; btn.textContent = 'جاري الحفظ...';
+    const fd = new FormData(e.target);
+    
+    const updates = {
+      full_name: fd.get('full_name'),
+      phone: fd.get('phone'),
+      birth_date: fd.get('birth_date'),
+      contact_email: fd.get('contact_email'),
+      study_year: fd.get('study_year')
+    };
+    
+    await supabase.from('users').update(updates).eq('id', user.id);
+    modal.remove();
+    onSaveComplete();
+  });
+}
+
+/* ===================== الإقلاع وتشغيل التطبيق ===================== */
 boot();
 </script>
 </body>
