@@ -1187,23 +1187,35 @@ async function renderAdminAttendance(main, selectedSessionId=''){
   await renderAttendanceTable(selectedSessionId);
 }
 
-async function renderAttendanceTable(sessionId, activeYear = 'الصف الأول'){
+async function renderAttendanceTable(sessionId, activeYear = 'الصف الأول', filterText = ''){
   const wrap = document.getElementById('attendance-table-wrap');
   const students = await fetchAllStudents();
   const { data: existing } = await supabase.from('attendance_records').select('*').eq('session_id', sessionId);
   const map = {};
   (existing||[]).forEach(r => map[r.user_id] = r);
 
-  const filteredStudents = students.filter(s => s.study_year === activeYear);
+  const filteredStudents = students.filter(s =>
+    s.study_year === activeYear &&
+    (!filterText || s.full_name.toLowerCase().includes(filterText.toLowerCase()))
+  );
+
+  function fmtDateTime(iso){
+    if(!iso) return '<span style="color:var(--gray-mid);font-size:12px;">—</span>';
+    try{ return new Date(iso).toLocaleString('ar-EG', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }); }
+    catch(e){ return '—'; }
+  }
 
   wrap.innerHTML = `
   <div class="sub-tabs">
     <div class="sub-tab ${activeYear==='الصف الأول'?'active':''}" data-year="الصف الأول">الصف الأول (${students.filter(s=>s.study_year==='الصف الأول').length})</div>
     <div class="sub-tab ${activeYear==='الصف الثاني'?'active':''}" data-year="الصف الثاني">الصف الثاني (${students.filter(s=>s.study_year==='الصف الثاني').length})</div>
   </div>
-  ${filteredStudents.length===0 ? `<div class="empty-state">مفيش دارسين مسجلين في ${activeYear} حالياً</div>` : `
+  <div class="toolbar" style="margin-bottom:14px;">
+    <input type="text" class="grow" id="att-search-input" placeholder="بحث باسم الدارس..." value="${escapeHtml(filterText)}">
+  </div>
+  ${filteredStudents.length===0 ? `<div class="empty-state">مفيش دارسين مطابقين للبحث في ${activeYear}</div>` : `
   <table>
-    <thead><tr><th>الدارس</th><th>الحالة العامة</th><th>ملاحظات (الوقت / التأخير..)</th></tr></thead>
+    <thead><tr><th>الدارس</th><th>الحالة العامة</th><th>وقت التسجيل</th><th>ملاحظات (الوقت / التأخير..)</th></tr></thead>
     <tbody>${filteredStudents.map(s => {
       const rec = map[s.id] || {};
       return `<tr>
@@ -1214,6 +1226,7 @@ async function renderAttendanceTable(sessionId, activeYear = 'الصف الأو�
             <button class="att-btn absent ${rec.status==='absent'?'on':''}" data-att="${s.id}" data-status="absent">غايب</button>
           </div>
         </td>
+        <td><span style="font-size:12.5px;color:var(--gray-mid);">${fmtDateTime(rec.recorded_at)}</span></td>
         <td><input type="text" class="note-input" placeholder="مثال: متأخر 15 دقيقة" data-note="${s.id}" value="${escapeHtml(rec.notes||'')}"></td>
       </tr>`;
     }).join('')}</tbody>
@@ -1223,20 +1236,27 @@ async function renderAttendanceTable(sessionId, activeYear = 'الصف الأو�
     tab.addEventListener('click', () => renderAttendanceTable(sessionId, tab.dataset.year));
   });
 
+  let attSearchTimer;
+  document.getElementById('att-search-input').addEventListener('input', (e) => {
+    clearTimeout(attSearchTimer);
+    attSearchTimer = setTimeout(() => renderAttendanceTable(sessionId, activeYear, e.target.value), 250);
+  });
+
   wrap.querySelectorAll('[data-att]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const userId = btn.dataset.att; const status = btn.dataset.status;
       const noteInput = wrap.querySelector(`.note-input[data-note="${userId}"]`);
       btn.disabled = true;
       const { error } = await supabase.from('attendance_records').upsert({
-        session_id: sessionId, user_id: userId, status, notes: noteInput.value
+        session_id: sessionId, user_id: userId, status, notes: noteInput.value,
+        recorded_at: new Date().toISOString()
       }, { onConflict: 'session_id,user_id' });
       if(error){
         alert('تعذر حفظ الحضور: ' + error.message);
         btn.disabled = false;
         return;
       }
-      renderAttendanceTable(sessionId, activeYear);
+      renderAttendanceTable(sessionId, activeYear, filterText);
     });
   });
 
