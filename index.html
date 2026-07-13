@@ -1026,7 +1026,8 @@ async function renderAdminExams(main){
   main.querySelectorAll('[data-del-exam]').forEach(btn => {
     btn.addEventListener('click', async () => {
       if(!confirm('متأكد من حذف الامتحان ده؟ هيتحذف معاه كل الدرجات المربوطة بيه')) return;
-      await supabase.from('exams').delete().eq('id', btn.dataset.delExam);
+      const { error } = await supabase.from('exams').delete().eq('id', btn.dataset.delExam);
+      if(error){ alert('تعذر حذف الامتحان: ' + error.message); return; }
       renderAdminExams(main);
     });
   });
@@ -1100,11 +1101,17 @@ async function renderScoresTable(examId, filterText){
       const val = Number(input.value);
       if(input.value === '' || isNaN(val)){ alert('اكتب درجة صحيحة مئوية'); return; }
       btn.disabled = true; btn.textContent = '...';
-      
-      await supabase.from('scores').upsert({
+
+      const { error } = await supabase.from('scores').upsert({
         exam_id: examId, user_id: userId, score: val, updated_at: new Date().toISOString()
       }, { onConflict: 'exam_id,user_id' });
-      
+
+      if(error){
+        alert('تعذر حفظ الدرجة: ' + error.message);
+        btn.disabled = false; btn.textContent = 'حفظ';
+        return;
+      }
+
       btn.textContent = 'تم ✓'; btn.classList.add('saved');
       setTimeout(() => renderScoresTable(examId, document.getElementById('search-input')?.value || ''), 500);
     });
@@ -1142,9 +1149,10 @@ async function renderAdminAttendance(main, selectedSessionId=''){
     const fd = new FormData(e.target);
     const btn = document.getElementById('session-submit');
     btn.disabled = true; btn.textContent='جاري الإضافة...';
-    await supabase.from('attendance_sessions').insert({
+    const { error } = await supabase.from('attendance_sessions').insert({
       name: fd.get('name'), session_date: fd.get('session_date'), created_by: state.profile.id
     });
+    if(error){ alert('تعذر إضافة اللقاء: ' + error.message); btn.disabled = false; btn.textContent='إضافة اللقاء'; return; }
     renderAdminAttendance(main);
   });
 
@@ -1193,9 +1201,15 @@ async function renderAttendanceTable(sessionId, activeYear = 'الصف الأو�
     btn.addEventListener('click', async () => {
       const userId = btn.dataset.att; const status = btn.dataset.status;
       const noteInput = wrap.querySelector(`.note-input[data-note="${userId}"]`);
-      await supabase.from('attendance_records').upsert({
+      btn.disabled = true;
+      const { error } = await supabase.from('attendance_records').upsert({
         session_id: sessionId, user_id: userId, status, notes: noteInput.value
       }, { onConflict: 'session_id,user_id' });
+      if(error){
+        alert('تعذر حفظ الحضور: ' + error.message);
+        btn.disabled = false;
+        return;
+      }
       renderAttendanceTable(sessionId, activeYear);
     });
   });
@@ -1204,9 +1218,10 @@ async function renderAttendanceTable(sessionId, activeYear = 'الصف الأو�
     input.addEventListener('change', async () => {
       const userId = input.dataset.note;
       const rec = map[userId] || {};
-      await supabase.from('attendance_records').upsert({
+      const { error } = await supabase.from('attendance_records').upsert({
         session_id: sessionId, user_id: userId, notes: input.value, status: rec.status || 'absent'
       }, { onConflict: 'session_id,user_id' });
+      if(error) alert('تعذر حفظ الملاحظة: ' + error.message);
     });
   });
 }
@@ -1329,7 +1344,8 @@ function openEditStudentModal(user, onSaveComplete) {
       study_year: fd.get('study_year')
     };
     
-    await supabase.from('users').update(updates).eq('id', user.id);
+    const { error } = await supabase.from('users').update(updates).eq('id', user.id);
+    if(error){ alert('تعذر حفظ التعديلات: ' + error.message); btn.disabled = false; btn.textContent = 'حفظ البيانات الجديدة'; return; }
     modal.remove();
     onSaveComplete();
   });
