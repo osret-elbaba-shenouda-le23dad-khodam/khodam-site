@@ -418,10 +418,10 @@ async function doSignup(formEl, btn){
   const fullName = fd.get('full_name')?.trim();
   const phone = fd.get('phone')?.trim();
   const birthDate = fd.get('birth_date');
-  const sector = fd.get('sector')?.trim();
+  const studyYear = fd.get('study_year');
   const photoFile = document.getElementById('signup-photo-input').files[0];
 
-  if(!username || !password || !fullName || !phone || !birthDate){
+  if(!username || !password || !fullName || !phone || !birthDate || !studyYear){
     state.error = 'من فضلك املأ كل الحقول المطلوبة';
     render(); return;
   }
@@ -459,7 +459,7 @@ async function doSignup(formEl, btn){
     full_name: fullName,
     phone,
     birth_date: birthDate,
-    sector: sector || null,
+    study_year: studyYear,
     photo_url: pub.publicUrl,
     role: 'student',
   });
@@ -583,8 +583,12 @@ function renderSignup(){
           </div>
         </div>
         <div class="field">
-          <label>القطاع / الفريق (اختياري)</label>
-          <input type="text" name="sector">
+          <label>السنة الدراسية <span class="req">*</span></label>
+          <select name="study_year" required>
+            <option value="" disabled selected>اختار السنة</option>
+            <option value="الصف الأول">الصف الأول</option>
+            <option value="الصف الثاني">الصف الثاني</option>
+          </select>
         </div>
         <button type="submit" class="btn-primary" id="signup-btn">إنشاء الحساب</button>
       </form>
@@ -672,7 +676,7 @@ function renderStudentProfile(main){
         <div class="meta">
           📱 ${escapeHtml(p.phone || '—')}<br>
           🎂 ${fmtDate(p.birth_date)}<br>
-          👥 ${escapeHtml(p.sector || 'بدون قطاع')}
+          🎓 ${escapeHtml(p.study_year || '—')}
         </div>
       </div>
     </div>
@@ -904,19 +908,19 @@ async function renderScoresTable(examId, filterText){
   const filtered = students.filter(s =>
     !filterText ||
     s.full_name.toLowerCase().includes(filterText.toLowerCase()) ||
-    (s.sector||'').toLowerCase().includes(filterText.toLowerCase())
+    (s.study_year||'').toLowerCase().includes(filterText.toLowerCase())
   );
 
   wrap.innerHTML = filtered.length===0 ? `<div class="empty-state">مفيش نتائج مطابقة</div>` : `
   <table>
-    <thead><tr><th>الدارس</th><th>القطاع</th><th>الدرجة (من ${exam.max_score})</th><th>الحالة</th><th></th></tr></thead>
+    <thead><tr><th>الدارس</th><th>السنة الدراسية</th><th>الدرجة (من ${exam.max_score})</th><th>الحالة</th><th></th></tr></thead>
     <tbody>${filtered.map(s => {
       const existingScore = scoreMap[s.id];
       const pct = existingScore ? Math.round((existingScore.score/exam.max_score)*100) : null;
       const passed = pct !== null ? pct >= exam.passing_score : null;
       return `<tr>
         <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
-        <td>${escapeHtml(s.sector||'—')}</td>
+        <td>${escapeHtml(s.study_year||'—')}</td>
         <td><input type="number" class="score-input" min="0" max="${exam.max_score}" data-user="${s.id}" value="${existingScore ? existingScore.score : ''}"></td>
         <td>${pct===null ? '<span style="color:var(--gray-mid);font-size:12.5px;">لسه ماترصدتش</span>' : `<span class="badge ${passed?'pass':'fail'}">${pct}%</span>`}</td>
         <td><button class="mini-btn" data-save="${s.id}">حفظ</button></td>
@@ -991,10 +995,10 @@ async function renderAttendanceTable(sessionId){
 
   wrap.innerHTML = students.length===0 ? `<div class="empty-state">لسه مفيش دارسين مسجلين</div>` : `
   <table>
-    <thead><tr><th>الدارس</th><th>القطاع</th><th>الحالة</th></tr></thead>
+    <thead><tr><th>الدارس</th><th>السنة الدراسية</th><th>الحالة</th></tr></thead>
     <tbody>${students.map(s => `<tr>
       <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
-      <td>${escapeHtml(s.sector||'—')}</td>
+      <td>${escapeHtml(s.study_year||'—')}</td>
       <td>
         <div class="att-toggle">
           <button class="att-btn present ${map[s.id]==='present'?'on':''}" data-att="${s.id}" data-status="present">حاضر</button>
@@ -1021,22 +1025,22 @@ async function renderAdminStudents(main, filterText=''){
   const filtered = students.filter(s =>
     !filterText ||
     s.full_name.toLowerCase().includes(filterText.toLowerCase()) ||
-    (s.sector||'').toLowerCase().includes(filterText.toLowerCase())
+    (s.study_year||'').toLowerCase().includes(filterText.toLowerCase())
   );
 
   main.innerHTML = `
   <div class="page-head"><div><h2>الدارسون</h2><p class="sub">كل الحسابات المسجلة (${students.length}) — تقدر تغيّر دور أي حساب بين "دارس" و"أدمن"</p></div></div>
   <div class="panel">
-    <div class="toolbar"><input type="text" class="grow" id="student-search" placeholder="بحث بالاسم أو القطاع..." value="${escapeHtml(filterText)}"></div>
+    <div class="toolbar"><input type="text" class="grow" id="student-search" placeholder="بحث بالاسم أو السنة الدراسية..." value="${escapeHtml(filterText)}"></div>
     ${filtered.length===0 ? `<div class="empty-state">مفيش نتائج</div>` : `
     <table>
-      <thead><tr><th>الصورة</th><th>الاسم</th><th>الموبايل</th><th>تاريخ الميلاد</th><th>القطاع</th><th>الدور</th><th></th></tr></thead>
+      <thead><tr><th>الصورة</th><th>الاسم</th><th>الموبايل</th><th>تاريخ الميلاد</th><th>السنة الدراسية</th><th>الدور</th><th></th></tr></thead>
       <tbody>${filtered.map(s => `<tr>
         <td><img class="row-photo" src="${s.photo_url}"></td>
         <td>${escapeHtml(s.full_name)}</td>
         <td>${escapeHtml(s.phone||'—')}</td>
         <td>${fmtDate(s.birth_date)}</td>
-        <td>${escapeHtml(s.sector||'—')}</td>
+        <td>${escapeHtml(s.study_year||'—')}</td>
         <td><span class="badge role-${s.role}">${s.role==='admin'?'أدمن':'دارس'}</span></td>
         <td><button class="btn-outline" data-toggle-role="${s.id}" data-current-role="${s.role}" ${s.id===state.profile.id?'disabled title="مينفعش تغيّر دورك انت"':''}>${s.role==='admin'?'خليه دارس':'خليه أدمن'}</button></td>
       </tr>`).join('')}</tbody>
