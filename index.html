@@ -354,7 +354,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const app = document.getElementById('app');
 
 let state = {
-  view: 'loading', // loading | login | signup | student | admin
+  view: 'loading',
   session: null,
   profile: null,
   adminTab: 'overview',
@@ -428,67 +428,73 @@ async function doLogout(){
   render();
 }
 
-/* ===================== التسجيل (إنشاء حساب مع حفظ مسودة) ===================== */
+/* ===================== التسجيل (نسخة كشف الأخطاء) ===================== */
 async function doSignup(formEl, btn){
-  state.error = '';
-  const fd = new FormData(formEl);
-  const password = fd.get('password')?.trim();
-  const fullName = normalizeName(fd.get('full_name'));
-  const phone = fd.get('phone')?.trim();
-  const email = fd.get('email')?.trim();
-  const birthDate = fd.get('birth_date');
-  const studyYear = fd.get('study_year');
-  const photoFile = document.getElementById('signup-photo-input').files[0];
+  try {
+    state.error = '';
+    const fd = new FormData(formEl);
+    const password = fd.get('password')?.trim();
+    const fullName = normalizeName(fd.get('full_name'));
+    const phone = fd.get('phone')?.trim();
+    const email = fd.get('email')?.trim();
+    const birthDate = fd.get('birth_date');
+    const studyYear = fd.get('study_year');
+    const photoFile = document.getElementById('signup-photo-input').files[0];
 
-  if(!password || !fullName || !phone || !email || !birthDate || !studyYear){
-    state.error = 'من فضلك املأ كل الحقول المطلوبة';
-    render(); return;
+    if(!password || !fullName || !phone || !email || !birthDate || !studyYear){
+      state.error = 'من فضلك املأ كل الحقول المطلوبة';
+      render(); return;
+    }
+    if(!photoFile){
+      state.error = 'الصورة الشخصية إجبارية لإنشاء الحساب';
+      render(); return;
+    }
+
+    btn.disabled = true; btn.textContent = 'جاري إنشاء الحساب...';
+
+    // 1. تجربة إنشاء الحساب في Auth
+    const { data: signData, error: signErr } = await supabase.auth.signUp({ email, password });
+    if(signErr){
+      alert("⚠️ خطأ في نظام التسجيل (Auth): \n" + JSON.stringify(signErr, null, 2));
+      state.error = 'البريد مستخدم أو هناك خطأ في التسجيل';
+      render(); return;
+    }
+    const userId = signData.user.id;
+
+    // 2. تجربة رفع الصورة
+    const ext = photoFile.name.split('.').pop();
+    const path = `${userId}/avatar.${ext}`;
+    const { error: upErr } = await supabase.storage.from('photos').upload(path, photoFile, { upsert:true });
+    if(upErr){
+      alert("⚠️ خطأ في رفع الصورة (Storage): \n" + JSON.stringify(upErr, null, 2));
+      state.error = 'حصل خطأ في رفع الصورة';
+      render(); return;
+    }
+    const { data: pub } = supabase.storage.from('photos').getPublicUrl(path);
+
+    // 3. تجربة حفظ البيانات في جدول users
+    const { error: insErr } = await supabase.from('users').insert({
+      id: userId, full_name: fullName, phone: phone,
+      contact_email: email, birth_date: birthDate,
+      study_year: studyYear, photo_url: pub.publicUrl, role: 'student',
+    });
+    if(insErr){
+      alert("⚠️ خطأ في قاعدة البيانات (Database): \n" + JSON.stringify(insErr, null, 2));
+      state.error = 'حصل خطأ في حفظ البيانات';
+      render(); return;
+    }
+
+    localStorage.removeItem('signupDraft');
+    const { data: { session } } = await supabase.auth.getSession();
+    state.session = session;
+    await loadProfile();
+    render();
+
+  } catch(e) {
+    alert("⚠️ خطأ غير متوقع في الكود: \n" + e.message);
+    state.error = 'حدث خطأ غير متوقع';
+    render();
   }
-  if(!photoFile){
-    state.error = 'الصورة الشخصية إجبارية لإنشاء الحساب';
-    render(); return;
-  }
-
-  btn.disabled = true; btn.textContent = 'جاري إنشاء الحساب...';
-
-  const { data: signData, error: signErr } = await supabase.auth.signUp({ email, password });
-  if(signErr){
-    state.error = (signErr.message.includes('already registered')) ? 'البريد الإلكتروني ده مسجل بيه حساب قبل كده' : 'حصل خطأ: ' + signErr.message;
-    render(); return;
-  }
-  const userId = signData.user.id;
-
-  // رفع الصورة
-  const ext = photoFile.name.split('.').pop();
-  const path = `${userId}/avatar.${ext}`;
-  const { error: upErr } = await supabase.storage.from('photos').upload(path, photoFile, { upsert:true });
-  if(upErr){
-    state.error = 'حصل خطأ في رفع الصورة: ' + upErr.message;
-    render(); return;
-  }
-  const { data: pub } = supabase.storage.from('photos').getPublicUrl(path);
-
-  const { error: insErr } = await supabase.from('users').insert({
-    id: userId,
-    full_name: fullName,
-    phone,
-    contact_email: email,
-    birth_date: birthDate,
-    study_year: studyYear,
-    photo_url: pub.publicUrl,
-    role: 'student',
-  });
-  if(insErr){
-    state.error = 'حصل خطأ في حفظ البيانات: ' + insErr.message;
-    render(); return;
-  }
-
-  localStorage.removeItem('signupDraft');
-
-  const { data: { session } } = await supabase.auth.getSession();
-  state.session = session;
-  await loadProfile();
-  render();
 }
 
 /* ===================== أدوات جلب البيانات ===================== */
@@ -612,14 +618,14 @@ function renderSignup(){
 
   const form = document.getElementById('signup-form');
 
-  // استرجاع المسودة التلقائية في المتصفح
+  // استرجاع المسودة التلقائية
   const draft = JSON.parse(localStorage.getItem('signupDraft') || '{}');
   Object.keys(draft).forEach(key => {
     const input = form.querySelector(`[name="${key}"]`);
     if(input) input.value = draft[key];
   });
 
-  // حدث الكتابة لحفظ البيانات فوراً في الـ localStorage
+  // حفظ مسودة
   form.addEventListener('input', (e) => {
     if(e.target.name === 'password' || e.target.type === 'file') return;
     const fd = new FormData(form);
@@ -1056,7 +1062,7 @@ async function renderScoresTable(examId, filterText){
   const scoreMap = {};
   (existing||[]).forEach(s => scoreMap[s.user_id] = s);
 
-  // فلترة الطلاب بناء على الصف المخصص للمادة (لو عام تظهر للكل)
+  // فلترة الطلاب بناء على الصف المخصص للمادة
   const filtered = students.filter(s =>
     (exam.study_year === 'عام' || s.study_year === exam.study_year) &&
     (!filterText || s.full_name.toLowerCase().includes(filterText.toLowerCase()))
