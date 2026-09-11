@@ -469,7 +469,7 @@ function buildIdCardHtml(user){
     <div class="id-head">
       <div class="org">أسرة البابا شنودة لإعداد خدام</div>
       <span class="role-tag">${user.role==='admin'?'أدمن':'خادم / دارس'}</span>
-      <img class="id-photo" src="${user.photo_url}" alt="">
+      <img class="id-photo" src="${user.photo_url}" alt="" onerror="this.src='https://placehold.co/96x96/17255E/E0C083?text=%20'">
       <h3 class="id-name">${escapeHtml(user.full_name)}</h3>
       <div class="id-study-year">${escapeHtml(user.study_year || '—')}</div>
     </div>
@@ -536,6 +536,13 @@ async function boot(){
     state.view = 'login';
   }
   render();
+
+  supabase.auth.onAuthStateChange((event, session) => {
+    if(event === 'SIGNED_OUT'){
+      state = { view:'login', session:null, profile:null, adminTab:'overview', studentTab:'profile', error:'', loading:false };
+      render();
+    }
+  });
 }
 
 async function loadProfile(){
@@ -559,7 +566,7 @@ async function doLogin(email, password, btn){
   state.error = '';
   if(!email || !password){ state.error='اكتب البريد الإلكتروني وكلمة المرور'; render(); return; }
   btn.disabled = true; btn.textContent = 'جاري الدخول...';
-  
+
   const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
   if(error){
     state.error = 'البريد الإلكتروني أو كلمة المرور غلط';
@@ -578,12 +585,32 @@ async function doLogout(){
   render();
 }
 
+async function doForgotPassword(email, btn){
+  state.error = '';
+  if(!email){ state.error = 'اكتب بريدك الإلكتروني الأول علشان نبعتلك رابط الاسترجاع'; render(); return; }
+  btn.disabled = true; btn.textContent = 'جاري الإرسال...';
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+    redirectTo: window.location.origin + window.location.pathname
+  });
+  btn.disabled = false; btn.textContent = 'إرسال رابط استرجاع كلمة المرور';
+  if(error){
+    state.error = 'تعذر إرسال رابط الاسترجاع، تأكد من البريد الإلكتروني';
+    render();
+    return;
+  }
+  state.error = '';
+  state.info = 'تم إرسال رابط استرجاع كلمة المرور على بريدك الإلكتروني، افتحه من نفس الجهاز';
+  render();
+}
+
 /* ===================== التسجيل ===================== */
 async function doSignup(formEl, btn){
+  let uploadedPath = null;
   try {
     state.error = '';
     const fd = new FormData(formEl);
     const password = fd.get('password')?.trim();
+    const confirmPassword = fd.get('confirm_password')?.trim();
     const fullName = normalizeName(fd.get('full_name'));
     const email = fd.get('email')?.trim();
     const address = fd.get('address')?.trim();
@@ -599,8 +626,20 @@ async function doSignup(formEl, btn){
       state.error = 'من فضلك املأ كل الحقول المطلوبة';
       render(); return;
     }
+    if(password.length < 6){
+      state.error = 'كلمة المرور لازم تكون 6 حروف/أرقام على الأقل';
+      render(); return;
+    }
+    if(password !== confirmPassword){
+      state.error = 'كلمة المرور وتأكيدها مش متطابقين';
+      render(); return;
+    }
     if(!photoFile){
       state.error = 'الصورة الشخصية إجبارية لإنشاء الحساب';
+      render(); return;
+    }
+    if(photoFile.size > 5 * 1024 * 1024){
+      state.error = 'حجم الصورة كبير جدًا، من فضلك اختار صورة أصغر من 5 ميجا';
       render(); return;
     }
 
@@ -610,26 +649,33 @@ async function doSignup(formEl, btn){
     const { data: signData, error: signErr } = await supabase.auth.signUp({ email, password });
     if(signErr){
       console.error('Signup auth error:', signErr);
-      state.error = 'البريد مستخدم أو هناك خطأ في التسجيل، جرب تاني';
+      state.error = signErr.message?.toLowerCase().includes('already') || signErr.status === 422
+        ? 'البريد الإلكتروني ده مسجل بحساب قبل كده'
+        : 'حصل خطأ في التسجيل، جرب تاني';
+      btn.disabled = false; btn.textContent = 'إنشاء الحساب';
       render(); return;
     }
     const userId = signData.user.id;
 
     // لو تفعيل الإيميل مفعّل في إعدادات Supabase، مفيش session دلوقتي
-    // وأي محاولة رفع/حفظ بيانات هترفض بسبب RLS. لازم تتأكد إن Confirm Email متقفل
-    // من Supabase Dashboard > Authentication > Providers، أو تتعامل مع الحالة دي هنا.
+    // وأي محاولة رفع/حفظ بيانات هترفض بسبب RLS.
     if(!signData.session){
-      state.error = 'تم إنشاء الحساب، من فضلك أكّد بريدك الإلكتروني ثم سجّل الدخول';
+      localStorage.removeItem('signupDraft');
+      state.error = '';
+      state.view = 'login';
+      state.error = 'تم إنشاء الحساب بنجاح، من فضلك أكّد بريدك الإلكتروني من الرسالة اللي وصلتلك ثم سجّل الدخول';
       render(); return;
     }
 
     // 2. رفع الصورة
-    const ext = photoFile.name.split('.').pop();
+    const ext = (photoFile.name.split('.').pop() || 'jpg').toLowerCase();
     const path = `${userId}/avatar.${ext}`;
+    uploadedPath = path;
     const { error: upErr } = await supabase.storage.from('photos').upload(path, photoFile, { upsert:true });
     if(upErr){
       console.error('Photo upload error:', upErr);
       state.error = 'حصل خطأ في رفع الصورة، جرب تاني';
+      btn.disabled = false; btn.textContent = 'إنشاء الحساب';
       render(); return;
     }
     const { data: pub } = supabase.storage.from('photos').getPublicUrl(path);
@@ -643,7 +689,10 @@ async function doSignup(formEl, btn){
     });
     if(insErr){
       console.error('Profile insert error:', insErr);
+      // تنظيف الصورة اللي اتحملت لو فشل حفظ البيانات
+      await supabase.storage.from('photos').remove([path]);
       state.error = 'حصل خطأ في حفظ البيانات، جرب تاني';
+      btn.disabled = false; btn.textContent = 'إنشاء الحساب';
       render(); return;
     }
 
@@ -656,6 +705,7 @@ async function doSignup(formEl, btn){
   } catch(e) {
     console.error('Unexpected signup error:', e);
     state.error = 'حدث خطأ غير متوقع، جرب تاني';
+    if(btn){ btn.disabled = false; btn.textContent = 'إنشاء الحساب'; }
     render();
   }
 }
@@ -685,6 +735,7 @@ function render(){
     return;
   }
   if(state.view === 'login') return renderLogin();
+  if(state.view === 'forgot') return renderForgotPassword();
   if(state.view === 'signup') return renderSignup();
   if(state.view === 'student') return renderStudent();
   if(state.view === 'admin') return renderAdmin();
@@ -711,6 +762,7 @@ function renderLogin(){
         </div>
         <button type="submit" class="btn-primary" id="login-btn">تسجيل الدخول</button>
       </form>
+      <div class="switch-line"><button id="go-forgot">نسيت كلمة المرور؟</button></div>
       <div class="switch-line">لسه معملتش حساب؟ <button id="go-signup">إنشاء حساب جديد</button></div>
     </div>
   </div>`;
@@ -722,6 +774,41 @@ function renderLogin(){
   });
   document.getElementById('go-signup').addEventListener('click', () => {
     state.view = 'signup'; state.error=''; render();
+  });
+  document.getElementById('go-forgot').addEventListener('click', () => {
+    state.view = 'forgot'; state.error=''; state.info=''; render();
+  });
+}
+
+/* ===================== شاشة استرجاع كلمة المرور ===================== */
+function renderForgotPassword(){
+  app.innerHTML = `
+  <div class="centered-shell">
+    <div class="auth-card">
+      <div class="brand-block">
+        <h1>استرجاع كلمة المرور</h1>
+        <p>هنبعتلك رابط لإعادة تعيين كلمة المرور</p>
+      </div>
+      ${state.error ? `<div class="error-box">${escapeHtml(state.error)}</div>` : ''}
+      ${state.info ? `<div class="info-box">${escapeHtml(state.info)}</div>` : ''}
+      <form id="forgot-form">
+        <div class="field">
+          <label>البريد الإلكتروني</label>
+          <input type="email" name="email" autocomplete="email" required dir="ltr" style="text-align:left;">
+        </div>
+        <button type="submit" class="btn-primary" id="forgot-btn">إرسال رابط استرجاع كلمة المرور</button>
+      </form>
+      <div class="switch-line"><button id="back-login">رجوع لتسجيل الدخول</button></div>
+    </div>
+  </div>`;
+
+  document.getElementById('forgot-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    doForgotPassword(fd.get('email'), document.getElementById('forgot-btn'));
+  });
+  document.getElementById('back-login').addEventListener('click', () => {
+    state.view = 'login'; state.error=''; state.info=''; render();
   });
 }
 
@@ -744,9 +831,15 @@ function renderSignup(){
           <label>البريد الإلكتروني <span class="req">*</span></label>
           <input type="email" name="email" required dir="ltr" style="text-align:left;">
         </div>
-        <div class="field">
-          <label>كلمة المرور <span class="req">*</span></label>
-          <input type="password" name="password" minlength="6" required dir="ltr" style="text-align:left;">
+        <div class="field-row">
+          <div class="field">
+            <label>كلمة المرور <span class="req">*</span></label>
+            <input type="password" name="password" minlength="6" required dir="ltr" style="text-align:left;">
+          </div>
+          <div class="field">
+            <label>تأكيد كلمة المرور <span class="req">*</span></label>
+            <input type="password" name="confirm_password" minlength="6" required dir="ltr" style="text-align:left;">
+          </div>
         </div>
         <div class="field">
           <label>العنوان <span class="req">*</span></label>
@@ -754,7 +847,7 @@ function renderSignup(){
         </div>
         <div class="field">
           <label>تاريخ الميلاد <span class="req">*</span></label>
-          <input type="date" name="birth_date" required>
+          <input type="date" name="birth_date" required max="${new Date().toISOString().split('T')[0]}">
         </div>
         <div class="field">
           <label>أب الاعتراف <span class="req">*</span></label>
@@ -798,18 +891,20 @@ function renderSignup(){
   const form = document.getElementById('signup-form');
 
   // استرجاع المسودة التلقائية
-  const draft = JSON.parse(localStorage.getItem('signupDraft') || '{}');
+  let draft = {};
+  try{ draft = JSON.parse(localStorage.getItem('signupDraft') || '{}'); }catch(e){ draft = {}; }
   Object.keys(draft).forEach(key => {
     const input = form.querySelector(`[name="${key}"]`);
     if(input) input.value = draft[key];
   });
 
-  // حفظ مسودة
+  // حفظ مسودة (من غير كلمة المرور)
   form.addEventListener('input', (e) => {
-    if(e.target.name === 'password' || e.target.type === 'file') return;
+    if(e.target.name === 'password' || e.target.name === 'confirm_password' || e.target.type === 'file') return;
     const fd = new FormData(form);
     const currentData = Object.fromEntries(fd.entries());
     delete currentData.password;
+    delete currentData.confirm_password;
     localStorage.setItem('signupDraft', JSON.stringify(currentData));
   });
 
@@ -818,6 +913,11 @@ function renderSignup(){
   document.getElementById('signup-photo-input').addEventListener('change', (e) => {
     const f = e.target.files[0];
     if(!f) return;
+    if(f.size > 5 * 1024 * 1024){
+      state.error = 'حجم الصورة كبير جدًا، من فضلك اختار صورة أصغر من 5 ميجا';
+      render();
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => { document.getElementById('photo-preview').innerHTML = `<img src="${reader.result}">`; };
     reader.readAsDataURL(f);
@@ -834,14 +934,14 @@ function sidebarHtml(items, activeKey, navAttr){
   return `
   <div class="sidebar">
     <div class="brand-block">
-      <div class="mark" style="padding:0;overflow:hidden;"><img src="${p.photo_url}" alt="" style="width:100%;height:100%;object-fit:cover;"></div>
+      <div class="mark" style="padding:0;overflow:hidden;"><img src="${p.photo_url}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none'"></div>
       <h1>${escapeHtml(p.full_name)}</h1>
       <p>${p.role==='admin'?'أدمن':'دارس'} — إعداد خدام</p>
     </div>
     ${items.map(it => `<div class="nav-item ${it.key===activeKey?'active':''}" data-${navAttr}="${it.key}">${it.label}</div>`).join('')}
     <div class="sidebar-footer">
       <div class="who">
-        <img src="${p.photo_url}" alt="">
+        <img src="${p.photo_url}" alt="" onerror="this.style.display='none'">
         <div><div class="n">${escapeHtml(p.full_name)}</div><div class="r">${p.role==='admin'?'أدمن':'دارس'}</div></div>
       </div>
       <button class="logout-btn" id="logout-btn">تسجيل الخروج</button>
@@ -851,7 +951,7 @@ function sidebarHtml(items, activeKey, navAttr){
 
 function attachSidebarEvents(navAttr, onNav){
   document.querySelectorAll(`.nav-item`).forEach(el => {
-    el.addEventListener('click', () => { stopQrScanner(); onNav(el.dataset[navAttr]); });
+    el.addEventListener('click', () => { state.error=''; stopQrScanner(); onNav(el.dataset[navAttr]); });
   });
   document.getElementById('logout-btn').addEventListener('click', doLogout);
 }
@@ -881,7 +981,7 @@ function renderStudentProfile(main){
   ${buildIdCardHtml(p)}
   <div class="panel">
     <div class="profile-card">
-      <img src="${p.photo_url}" alt="">
+      <img src="${p.photo_url}" alt="" onerror="this.style.display='none'">
       <div>
         <h3 class="name">${escapeHtml(p.full_name)}</h3>
         <div class="meta">
@@ -1110,7 +1210,7 @@ async function renderAdminLookup(main, query='', selectedId=''){
       ? `<div class="empty-state">مفيش نتائج مطابقة للأسف</div>`
       : `<div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">${matches.map(s => `
           <button class="btn-outline" style="display:flex;align-items:center;gap:10px;justify-content:flex-start;text-align:right;padding:10px 14px;" data-pick="${s.id}">
-            <img class="row-photo" src="${s.photo_url}">
+            <img class="row-photo" src="${s.photo_url}" onerror="this.style.visibility='hidden'">
             <span>${escapeHtml(s.full_name)}</span>
             <span class="badge role-${s.role}" style="margin-right:auto;">${s.role==='admin'?'أدمن':'دارس'} — ${escapeHtml(s.study_year)}</span>
           </button>`).join('')}</div>`;
@@ -1147,7 +1247,7 @@ async function renderLookupDetail(userId){
   detailWrap.innerHTML = `
   <div class="panel" style="margin-top:20px;">
     <div class="profile-card">
-      <img src="${p.photo_url}" alt="">
+      <img src="${p.photo_url}" alt="" onerror="this.style.display='none'">
       <div>
         <h3 class="name">${escapeHtml(p.full_name)}</h3>
         <div class="meta">
@@ -1280,18 +1380,26 @@ async function renderAdminResults(main, activeYear='الصف الأول', filter
   </div>`;
 
   main.querySelectorAll('.sub-tab').forEach(tab => {
-    tab.addEventListener('click', () => renderAdminResults(main, tab.dataset.year));
+    tab.addEventListener('click', () => { state.error=''; renderAdminResults(main, tab.dataset.year); });
   });
 
   document.getElementById('exam-form').addEventListener('submit', async (e) => {
     e.preventDefault(); state.error='';
     const fd = new FormData(e.target);
+    const name = (fd.get('name')||'').trim();
+    const examDate = fd.get('exam_date');
+    const maxScore = Number(fd.get('max_score'));
+    const passingScore = Number(fd.get('passing_score'));
+    if(!name || !examDate || !maxScore || maxScore <= 0){
+      state.error = 'من فضلك راجع بيانات الامتحان (الاسم، التاريخ، الدرجة النهائية)';
+      renderAdminResults(main, activeYear); return;
+    }
     const btn = document.getElementById('exam-submit');
     btn.disabled = true; btn.textContent = 'جاري الإضافة...';
     const { error } = await supabase.from('exams').insert({
-      name: fd.get('name'), subject: fd.get('subject') || null,
-      exam_date: fd.get('exam_date'), max_score: Number(fd.get('max_score')),
-      passing_score: Number(fd.get('passing_score')), study_year: fd.get('study_year'),
+      name, subject: (fd.get('subject')||'').trim() || null,
+      exam_date: examDate, max_score: maxScore,
+      passing_score: passingScore, study_year: fd.get('study_year'),
       created_by: state.profile.id,
     });
     if(error){ state.error = 'حصل خطأ: ' + error.message; }
@@ -1321,6 +1429,7 @@ async function renderAdminResults(main, activeYear='الصف الأول', filter
 async function renderResultsScoreTable(examId, filterText, activeYear){
   const wrap = document.getElementById('results-table-wrap');
   const exam = (await fetchExams()).find(e => e.id === examId);
+  if(!exam){ wrap.innerHTML = `<div class="empty-state">تعذر تحميل بيانات الامتحان</div>`; return; }
   const students = await fetchAllStudents();
   const { data: existing } = await supabase.from('scores').select('*').eq('exam_id', examId);
   const scoreMap = {};
@@ -1339,7 +1448,7 @@ async function renderResultsScoreTable(examId, filterText, activeYear){
       const pct = existingScore ? Math.round((existingScore.score/exam.max_score)*100) : null;
       const passed = pct !== null ? pct >= exam.passing_score : null;
       return `<tr>
-        <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
+        <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}" onerror="this.style.visibility='hidden'"><span>${escapeHtml(s.full_name)}</span></td>
         <td><input type="number" class="score-input" min="0" max="${exam.max_score}" data-user="${s.id}" value="${existingScore ? existingScore.score : ''}"></td>
         <td>${pct===null ? '<span style="color:var(--gray-mid);font-size:12.5px;">لم ترصد بعد</span>' : `<span class="badge ${passed?'pass':'fail'}">${pct}%</span>`}</td>
         <td><button class="mini-btn" data-save="${s.id}">حفظ</button></td>
@@ -1352,7 +1461,7 @@ async function renderResultsScoreTable(examId, filterText, activeYear){
       const userId = btn.dataset.save;
       const input = wrap.querySelector(`.score-input[data-user="${userId}"]`);
       const val = Number(input.value);
-      if(input.value === '' || isNaN(val)){ alert('اكتب درجة صحيحة'); return; }
+      if(input.value === '' || isNaN(val) || val < 0 || val > exam.max_score){ alert(`اكتب درجة صحيحة بين 0 و ${exam.max_score}`); return; }
       btn.disabled = true; btn.textContent = '...';
 
       const { error } = await supabase.from('scores').upsert({
@@ -1448,7 +1557,7 @@ function prependScanLog(logEl, user, msg, ok=false){
   const row = document.createElement('div');
   row.className = 'qr-scan-row';
   row.innerHTML = user
-    ? `<img src="${user.photo_url}" alt=""><span style="flex:1;">${escapeHtml(user.full_name)}</span><span class="msg ${ok?'ok':'fail'}">${escapeHtml(msg)}</span>`
+    ? `<img src="${user.photo_url}" alt="" onerror="this.style.visibility='hidden'"><span style="flex:1;">${escapeHtml(user.full_name)}</span><span class="msg ${ok?'ok':'fail'}">${escapeHtml(msg)}</span>`
     : `<span class="msg fail" style="flex:1;">${escapeHtml(msg)}</span>`;
   logEl.prepend(row);
 }
@@ -1548,7 +1657,7 @@ async function renderAttendanceTable(sessionId, activeYear = 'الصف الأو�
     <tbody>${filteredStudents.map(s => {
       const rec = map[s.id] || {};
       return `<tr>
-        <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
+        <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}" onerror="this.style.visibility='hidden'"><span>${escapeHtml(s.full_name)}</span></td>
         <td>
           <div class="att-toggle">
             <button class="att-btn present ${rec.status==='present'?'on':''}" data-att="${s.id}" data-status="present">حاضر</button>
@@ -1590,13 +1699,17 @@ async function renderAttendanceTable(sessionId, activeYear = 'الصف الأو�
   });
 
   wrap.querySelectorAll('.note-input').forEach(input => {
-    input.addEventListener('change', async () => {
-      const userId = input.dataset.note;
-      const rec = map[userId] || {};
-      const { error } = await supabase.from('attendance_records').upsert({
-        session_id: sessionId, user_id: userId, notes: input.value, status: rec.status || 'absent'
-      }, { onConflict: 'session_id,user_id' });
-      if(error) alert('تعذر حفظ الملاحظة: ' + error.message);
+    let noteTimer;
+    input.addEventListener('input', () => {
+      clearTimeout(noteTimer);
+      noteTimer = setTimeout(async () => {
+        const userId = input.dataset.note;
+        const rec = map[userId] || {};
+        const { error } = await supabase.from('attendance_records').upsert({
+          session_id: sessionId, user_id: userId, notes: input.value, status: rec.status || 'absent'
+        }, { onConflict: 'session_id,user_id' });
+        if(error) console.error('تعذر حفظ الملاحظة:', error.message);
+      }, 500);
     });
   });
 }
@@ -1604,8 +1717,8 @@ async function renderAttendanceTable(sessionId, activeYear = 'الصف الأو�
 /* ===================== عرض وتعديل بيانات الدارس بالكامل ===================== */
 async function renderAdminStudents(main, filterText='', activeYear='الكل'){
   const students = await fetchAllUsers();
-  
-  const filtered = students.filter(s => 
+
+  const filtered = students.filter(s =>
     (activeYear === 'الكل' || s.study_year === activeYear) &&
     (!filterText || s.full_name.toLowerCase().includes(filterText.toLowerCase()))
   );
@@ -1626,7 +1739,7 @@ async function renderAdminStudents(main, filterText='', activeYear='الكل'){
       <thead><tr><th>الكود</th><th>الاسم</th><th>الموبايل</th><th>البريد الإلكتروني</th><th>الصف</th><th>الدور</th><th>إجراءات الإشراف</th></tr></thead>
       <tbody>${filtered.map(s => `<tr>
         <td><span style="font-size:12px;font-weight:700;color:var(--gold-dim);direction:ltr;">${formatMemberCode(s.member_no)}</span></td>
-        <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}"><span>${escapeHtml(s.full_name)}</span></td>
+        <td style="display:flex;align-items:center;gap:8px;"><img class="row-photo" src="${s.photo_url}" onerror="this.style.visibility='hidden'"><span>${escapeHtml(s.full_name)}</span></td>
         <td>${escapeHtml(s.phone||'—')}</td>
         <td>${escapeHtml(s.contact_email||'—')}</td>
         <td><span class="badge present">${escapeHtml(s.study_year||'—')}</span></td>
@@ -1678,6 +1791,7 @@ function openEditStudentModal(user, onSaveComplete) {
   <div class="modal-overlay" id="edit-modal">
     <div class="modal-content">
       <h3 style="margin-top:0; color:var(--royal-blue); border-bottom:1px solid var(--gray-line); padding-bottom:10px;">تعديل بيانات الدارس بالكامل</h3>
+      <div id="edit-modal-error"></div>
       <form id="edit-student-form">
         <div class="field"><label>الاسم الكامل</label><input type="text" name="full_name" value="${escapeHtml(user.full_name)}" required></div>
         <div class="field"><label>البريد الإلكتروني</label><input type="email" name="contact_email" value="${escapeHtml(user.contact_email||'')}"></div>
@@ -1706,20 +1820,29 @@ function openEditStudentModal(user, onSaveComplete) {
       </form>
     </div>
   </div>`;
-  
+
   document.body.insertAdjacentHTML('beforeend', modalHTML);
   const modal = document.getElementById('edit-modal');
-  
+
   document.getElementById('close-modal').addEventListener('click', () => modal.remove());
-  
+  modal.addEventListener('click', (e) => { if(e.target === modal) modal.remove(); });
+
   document.getElementById('edit-student-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const btn = document.getElementById('save-modal');
+    const errWrap = document.getElementById('edit-modal-error');
     btn.disabled = true; btn.textContent = 'جاري الحفظ...';
     const fd = new FormData(e.target);
-    
+
+    const fullName = normalizeName(fd.get('full_name'));
+    if(!fullName){
+      errWrap.innerHTML = `<div class="error-box">الاسم الكامل مطلوب</div>`;
+      btn.disabled = false; btn.textContent = 'حفظ البيانات الجديدة';
+      return;
+    }
+
     const updates = {
-      full_name: fd.get('full_name'),
+      full_name: fullName,
       phone: fd.get('phone'),
       whatsapp: fd.get('whatsapp'),
       birth_date: fd.get('birth_date'),
@@ -1729,9 +1852,13 @@ function openEditStudentModal(user, onSaveComplete) {
       qualification: fd.get('qualification'),
       study_year: fd.get('study_year')
     };
-    
+
     const { error } = await supabase.from('users').update(updates).eq('id', user.id);
-    if(error){ alert('تعذر حفظ التعديلات: ' + error.message); btn.disabled = false; btn.textContent = 'حفظ البيانات الجديدة'; return; }
+    if(error){
+      errWrap.innerHTML = `<div class="error-box">تعذر حفظ التعديلات: ${escapeHtml(error.message)}</div>`;
+      btn.disabled = false; btn.textContent = 'حفظ البيانات الجديدة';
+      return;
+    }
     modal.remove();
     onSaveComplete();
   });
@@ -1759,7 +1886,7 @@ async function renderAdminIdCards(main, filterText='', activeYear='الكل'){
     ${filtered.length===0 ? `<div class="empty-state">مفيش نتائج مطابقة</div>` : `
     <div class="id-grid">${filtered.map(u => `
       <div class="id-mini-card" data-view-id="${u.id}">
-        <img src="${u.photo_url}" alt="">
+        <img src="${u.photo_url}" alt="" onerror="this.src='https://placehold.co/60x60/17255E/E0C083?text=%20'">
         <div class="n">${escapeHtml(u.full_name)}</div>
         <div class="c">${formatMemberCode(u.member_no)}</div>
         <div class="y">${escapeHtml(u.study_year || '—')}</div>
